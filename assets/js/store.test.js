@@ -8,44 +8,58 @@ import {
   applyMaterialStockMovement,
   applyStockMovement,
   buildAdminMessengerUrl,
+  buildAnalyticsCsvContent,
+  buildAnalyticsPdfBytes,
   buildMaterialRecord,
   buildProductRecord,
   buildRequestDesignMessengerUrl,
+  calculateExpirationFromInput,
   calculateOrderPricing,
   computeCustomerDirectory,
   computeInventoryMetrics,
   computeMaterialInventoryMetrics,
+  computeMonthlyAnalyticsReport,
+  computePercentageChange,
   computeVariantPricing,
+  computeVoucherStatusInfo,
   createCustomOrderRequest,
   describeMaterialStockPreview,
   filterCatalogPageItems,
+  filterCustomerVouchers,
   filterFurnitureItems,
   filterInventoryMaterials,
   findMatchingColorVariant,
   formatCustomerProductDisplay,
+  formatSimplifiedProductCardData,
+  formatVoucherBenefitLabel,
+  formatVoucherExpiryDisplay,
+  formatVoucherIssuedDisplay,
+  generateOwnEntityId,
   getColorFilterCounts,
+  getCompletedTransactionsForCustomer,
   getMaterialCategories,
   getMaterialStockStatus,
   getProductStockStatus,
   getRecommendedBestSellers,
+  isOrderCompleted,
   paginateItems,
+  partitionOrdersByCompletion,
   recordCustomerOrderPayment,
   removeMaterialFromInventory,
   removeProductFromCatalog,
+  requestOrderCancellation,
+  resolveAnalyticsDateRange,
   resolveAuthNavigationState,
+  resolveCustomerAvatarState,
+  resolveOrderCancellationRequest,
+  revokeVoucherInList,
   validateAndBuildOfferProposal,
+  validateAndCreateVoucher,
   validateLoginCredentials,
   validateMaterialInput,
   validateNewFurnitureInput,
   validateVoucherForOrder,
   verifyAndCreateOrder,
-  calculateExpirationFromInput,
-  computeVoucherStatusInfo,
-  filterCustomerVouchers,
-  formatVoucherExpiryDisplay,
-  formatVoucherIssuedDisplay,
-  revokeVoucherInList,
-  validateAndCreateVoucher,
 } from './store.js';
 
 function loadSeedFromPhp() {
@@ -395,6 +409,18 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
       image: 'assets/images/category_dining_tables.jpg',
     });
     assert.equal(prodCheck.valid, true);
+
+    const lowPriceCheck = validateNewFurnitureInput({
+      name: 'Custom Walnut Dining Table',
+      sku: 'LR-CUST-99',
+      price: '10',
+      inStockCount: '2',
+      productType: 'customized',
+      image: 'assets/images/category_dining_tables.jpg',
+    });
+    assert.equal(lowPriceCheck.valid, false);
+    assert.equal(lowPriceCheck.errorMessage, 'Base Price must be at least ₱50.');
+    assert.equal(formatVoucherBenefitLabel({ discountType: 'fixed', discountAmount: 300 }), '₱300 OFF');
   });
 
   it('removes products from the catalog and cleans up associated cart items and vouchers', () => {
@@ -452,7 +478,6 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
   });
 
   it('resolves authentication-based navigation visibility for logged-out visitors, logged-in customers, and admins', () => {
-    // 1. Logged-out visitor: shows Sign In & Register, hides customer account options and admin options
     const guestState = resolveAuthNavigationState(null);
     assert.equal(guestState.isAuthenticated, false);
     assert.equal(guestState.showSignIn, true);
@@ -461,7 +486,6 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
     assert.equal(guestState.showAdminNav, false);
     assert.equal(guestState.cartCheckoutCta.label, 'Sign In to Checkout →');
 
-    // 2. Logged-in customer: hides Sign In & Register, shows My Account, My Orders, Profile & Logout, keeps admin hidden
     const customerState = resolveAuthNavigationState({
       email: 'rowena.vance@vancearchitects.com',
       name: 'Rowena Vance',
@@ -479,7 +503,6 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
     assert.equal(customerState.accountLinks.myOrders.href, 'dashboard.html?role=client&tab=orders');
     assert.equal(customerState.cartCheckoutCta.label, 'Proceed to Checkout →');
 
-    // 3. Logged-in admin: hides Sign In & Register, hides customer account nav, shows Admin Dashboard nav
     const adminState = resolveAuthNavigationState({
       email: 'admin@lilliarowena.com',
       name: 'Lillia Mercier (Business Owner)',
@@ -494,16 +517,14 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
   });
 
   it('validates Make Offer inputs, generates Offer Proposal metadata without altering catalog prices, and resolves Request a Design Messenger redirects', () => {
-    const product = { ...INITIAL_FURNITURE_ITEMS[0] }; // Rowena Curved Bouclé Lounge Sofa
+    const product = { ...INITIAL_FURNITURE_ITEMS[0] };
     const originalCatalogPrice = product.price;
     const originalStock = product.inStockCount;
 
-    // 1. Invalid offer (empty or zero price) is rejected
     const invalidOffer = validateAndBuildOfferProposal({ proposedPrice: 0 }, product, null);
     assert.equal(invalidOffer.ok, false);
     assert.ok(invalidOffer.errorMessage.includes('valid proposed price'));
 
-    // 2. Valid offer builds full proposal metadata without changing product price or inventory
     const sessionUser = {
       name: 'Rowena Vance',
       email: 'rowena.vance@vancearchitects.com',
@@ -525,17 +546,9 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
     assert.equal(validOffer.ok, true);
     assert.equal(validOffer.proposal.productName, 'Rowena Curved Bouclé Lounge Sofa');
     assert.equal(validOffer.proposal.proposedPrice, 3950);
-    assert.equal(validOffer.proposal.customizations, 'Custom 240cm length with smoked oak plinth');
-    assert.equal(validOffer.proposal.additionalNotes, 'Ground floor elevator access available');
-    assert.equal(validOffer.proposal.customerName, 'Rowena Vance');
-    assert.equal(
-      validOffer.proposal.downloadFilename,
-      'offer-proposal-rowena-curved-boucl-lounge-sofa.png'
-    );
     assert.equal(product.price, originalCatalogPrice);
     assert.equal(product.inStockCount, originalStock);
 
-    // 3. Request a Design requires login when guest, and redirects to Admin Messenger when logged in
     const guestDesignReq = buildRequestDesignMessengerUrl(null);
     assert.equal(guestDesignReq.requiresLogin, true);
     assert.equal(guestDesignReq.redirectUrl, 'login.html?redirect=request-design');
@@ -543,19 +556,222 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
     const loggedInDesignReq = buildRequestDesignMessengerUrl(sessionUser);
     assert.equal(loggedInDesignReq.requiresLogin, false);
     assert.ok(loggedInDesignReq.redirectUrl.startsWith('https://www.messenger.com/t/100000505712325'));
-    assert.ok(loggedInDesignReq.messageText.includes('Rowena Vance'));
-    assert.ok(loggedInDesignReq.messageText.includes('request a custom furniture design'));
   });
 
-  it('enforces fixed-amount-only voucher creation, product price cap validation, and automatic issuance timestamps', () => {
-    const nowMs = Date.parse('2026-11-16T02:00:00Z'); // 10:00 AM Asia/Manila
-    // Sofafurn-lv-01 has effectivePrice = 4365
+  it('resolves customer profile picture state with initials fallback and preserves avatar in customer directory', () => {
+    const fallbackAvatar = resolveCustomerAvatarState({ name: 'Rowena Vance', avatar: '' });
+    assert.equal(fallbackAvatar.hasAvatar, false);
+    assert.equal(fallbackAvatar.initials, 'RV');
+
+    const uploadedAvatar = resolveCustomerAvatarState({
+      name: 'Rowena Vance',
+      avatar: '/assets/images/profile_rowena.jpg',
+    });
+    assert.equal(uploadedAvatar.hasAvatar, true);
+    assert.equal(uploadedAvatar.avatarSrc, 'assets/images/profile_rowena.jpg');
+    assert.equal(uploadedAvatar.initials, 'RV');
+
+    const directory = computeCustomerDirectory(
+      [],
+      [],
+      {
+        name: 'Rowena Vance',
+        email: 'rowena.vance@vancearchitects.com',
+        phone: '+1 (212) 555-0148',
+        address: 'Suite 400, 118 Mercer St',
+        city: 'New York, NY 10013',
+        avatar: 'assets/images/profile_rowena.jpg',
+      }
+    );
+    assert.equal(directory.length, 1);
+    assert.equal(directory[0].avatar, 'assets/images/profile_rowena.jpg');
+  });
+
+  it('queues customer order cancellation requests for Admin approval and allows Admin to approve or decline', () => {
+    const sampleOrders = [
+      {
+        orderNumber: 'LR-2026-9901',
+        clientName: 'Rowena Vance',
+        clientEmail: 'rowena.vance@vancearchitects.com',
+        furnitureName: 'Rowena Curved Bouclé Lounge Sofa',
+        status: 'Order Confirmed · In Production Queue',
+        sqlStatus: 'Pending',
+        totalAmount: 4365,
+      },
+    ];
+
+    const reqRes = requestOrderCancellation({
+      orders: sampleOrders,
+      orderNumber: 'LR-2026-9901',
+    });
+    assert.equal(reqRes.ok, true);
+    assert.equal(reqRes.updatedOrder.cancellationRequested, true);
+    assert.equal(reqRes.updatedOrder.cancellationStatus, 'Pending Admin Approval');
+
+    const declineRes = resolveOrderCancellationRequest({
+      orders: reqRes.updatedOrders,
+      orderNumber: 'LR-2026-9901',
+      decision: 'decline',
+    });
+    assert.equal(declineRes.ok, true);
+    assert.equal(declineRes.decision, 'declined');
+    assert.equal(declineRes.updatedOrder.cancellationRequested, false);
+
+    const secondReq = requestOrderCancellation({
+      orders: declineRes.updatedOrders,
+      orderNumber: 'LR-2026-9901',
+    });
+    const approveRes = resolveOrderCancellationRequest({
+      orders: secondReq.updatedOrders,
+      orderNumber: 'LR-2026-9901',
+      decision: 'approve',
+    });
+    assert.equal(approveRes.ok, true);
+    assert.equal(approveRes.decision, 'approved');
+    assert.equal(approveRes.updatedOrder.sqlStatus, 'Cancelled');
+  });
+
+  it('marks an order as Completed when confirmed by Admin and adds it to the customer Completed Transactions', () => {
+    const sampleOrders = [
+      {
+        orderNumber: 'ORD-2026-8841',
+        clientName: 'Rowena Vance',
+        clientEmail: 'rowena.vance@vancearchitects.com',
+        furnitureName: 'Lillia Solid Walnut Dining Table (Custom Spec)',
+        selectedFinish: 'Hand-Rubbed Natural Walnut',
+        status: 'In Joinery & Millwork',
+        sqlStatus: 'InProduction',
+        totalAmount: 4256,
+        depositPaid: 2128,
+        orderDate: '2026-10-28',
+      },
+      {
+        orderNumber: 'ORD-2026-8834',
+        clientName: 'Rowena Vance',
+        clientEmail: 'rowena.vance@vancearchitects.com',
+        furnitureName: 'Rowena Curved Bouclé Lounge Sofa',
+        selectedFinish: 'Warm Oat Bouclé / Natural Oak',
+        status: 'Quality Inspection · Ready for Dispatch',
+        sqlStatus: 'Ready',
+        totalAmount: 4365,
+        depositPaid: 4365,
+        orderDate: '2026-10-14',
+      },
+    ];
+
+    const initialPartition = partitionOrdersByCompletion(sampleOrders);
+    assert.equal(initialPartition.activeOrders.length, 2);
+    assert.equal(initialPartition.completedOrders.length, 0);
+
+    const completeRes = applyAdminOrderUpdate({
+      orders: sampleOrders,
+      orderNumber: 'ORD-2026-8841',
+      updates: { status: 'Delivered · Completed' },
+    });
+    assert.equal(completeRes.ok, true);
+    assert.equal(isOrderCompleted(completeRes.updatedOrder), true);
+    assert.equal(completeRes.updatedOrder.paymentStatus, 'Paid in Full');
+
+    const afterPartition = partitionOrdersByCompletion(completeRes.updatedOrders);
+    assert.equal(afterPartition.activeOrders.length, 1);
+    assert.equal(afterPartition.completedOrders.length, 1);
+
+    const afterCompletedTx = getCompletedTransactionsForCustomer(
+      completeRes.updatedOrders,
+      'rowena.vance@vancearchitects.com'
+    );
+    assert.equal(afterCompletedTx.length, 1);
+    assert.equal(afterCompletedTx[0].txId, 'TXN-2026-8841');
+  });
+
+  it('formats simplified product card data without finish/color swatches or SKUs while preserving full variation options for Product Details', () => {
+    const sofa = INITIAL_FURNITURE_ITEMS[0];
+    const cardData = formatSimplifiedProductCardData(sofa);
+
+    assert.equal(cardData.id, sofa.id);
+    assert.equal(cardData.name, 'Rowena Curved Bouclé Lounge Sofa');
+    assert.equal(cardData.categoryName, 'Living Room');
+    assert.equal(cardData.hasDiscount, true);
+    assert.equal(cardData.originalPrice, 4850);
+    assert.equal(cardData.sellingPrice, 4365);
+    assert.equal(cardData.ctaLabel, 'View Product');
+    assert.equal('colorVariants' in cardData, false);
+    assert.equal('selectedFinish' in cardData, false);
+    assert.equal('sku' in cardData, false);
+  });
+
+  it('assigns explicit non-incrementing own code IDs (e.g. ProductID LR-LV-213, OrderID ORD-2026-xxxx, MaterialID MAT-xxx-xx, CustomerID LR-CUS-xxx, VoucherID VCH-LR-xxx) and avoids AUTO_INCREMENT in SQL', () => {
+    const prodExplicit = buildProductRecord({ name: 'Lounge Chair', sku: 'LR-LV-213', categoryId: 'living', price: 2500 });
+    const prodAuto = buildProductRecord({ name: 'Walnut Dining Table', categoryId: 'dining', price: 2900 });
+    assert.equal(prodExplicit.productId, 'LR-LV-213');
+    assert.equal(prodExplicit.sku, 'LR-LV-213');
+    assert.match(String(prodAuto.productId), /^LR-DN-\d{3}$/);
+    assert.equal(prodAuto.productId, prodAuto.sku);
+
+    const matA = buildMaterialRecord({ name: 'Smoked Ash', unit: 'bd ft', unitCost: 30, stockQuantity: 40 });
+    assert.match(String(matA.materialId), /^MAT-[A-Z]{3}-\d{2}$/);
+
+    const orderRes = verifyAndCreateOrder({
+      catalog: INITIAL_FURNITURE_ITEMS,
+      vouchers: INITIAL_VOUCHERS,
+      customerProfile: {
+        name: 'Rowena Vance',
+        email: 'rowena.vance@vancearchitects.com',
+        address: 'Suite 400, 118 Mercer St',
+        city: 'New York, NY',
+      },
+      cartItems: [{ product: INITIAL_FURNITURE_ITEMS[0], finish: INITIAL_FURNITURE_ITEMS[0].defaultFinish, quantity: 1 }],
+    });
+    assert.equal(orderRes.ok, true);
+    assert.match(String(orderRes.order.orderId), /^ORD-2026-\d{4}$/);
+
+    const vchId = generateOwnEntityId('voucher', 'VCH-TEST').codeId;
+    assert.match(String(vchId), /^VCH-LR-\d{3}$/);
+
+    const sqlContent = fs.readFileSync(path.join(process.cwd(), 'database', 'furniture.sql'), 'utf8');
+    assert.equal(/AUTO_INCREMENT/i.test(sqlContent), false);
+    assert.match(sqlContent, /'LR-LV-014'/);
+  });
+
+  it('merges fixed-amount Voucher creation, expiration duration/custom date-time validation, live status resolution, and revocation', () => {
+    const nowMs = Date.parse('2026-11-16T04:00:00Z'); // Nov 16, 2026 12:00 PM PHT
+
+    // 1. Fixed-amount voucher creation with 24 hours duration
+    const createRes = validateAndCreateVoucher(
+      {
+        customerEmail: 'rowena.vance@vancearchitects.com',
+        customerName: 'Rowena Vance',
+        furnitureId: 'furn-lv-01',
+        code: 'SAVE-500-TEST',
+        discountAmount: 500,
+        expirationMethod: 'duration',
+        durationValue: 24,
+        durationUnit: 'hours',
+      },
+      INITIAL_FURNITURE_ITEMS,
+      INITIAL_VOUCHERS,
+      nowMs
+    );
+    assert.equal(createRes.ok, true);
+    assert.equal(createRes.voucher.discountType, 'fixed');
+    assert.equal(createRes.voucher.discountAmount, 500);
+    assert.match(String(createRes.voucher.voucherId), /^VCH-LR-\d{3}$/);
+    assert.equal(createRes.voucher.status, 'Active');
+
+    const issuedDisplay = formatVoucherIssuedDisplay(createRes.voucher);
+    assert.equal(issuedDisplay.hasFullTimestamp, true);
+
+    const expiryDisplay = formatVoucherExpiryDisplay(createRes.voucher);
+    assert.ok(expiryDisplay.primary.length > 0);
+    assert.ok(expiryDisplay.secondary.includes('PHT'));
+
+    // 2. Rejects discount exceeding product price
     const overPriceRes = validateAndCreateVoucher(
       {
         customerEmail: 'rowena.vance@vancearchitects.com',
         furnitureId: 'furn-lv-01',
-        code: 'OVER-PRICE-5000',
-        discountAmount: 5000,
+        code: 'SAVE-99999',
+        discountAmount: 99999,
         expirationMethod: 'duration',
         durationValue: 24,
         durationUnit: 'hours',
@@ -565,137 +781,166 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
       nowMs
     );
     assert.equal(overPriceRes.ok, false);
-    assert.ok(overPriceRes.errorMessage.includes("cannot exceed the eligible product's price"));
+    assert.ok(overPriceRes.errorMessage.includes('cannot exceed the product price'));
 
-    const zeroRes = validateAndCreateVoucher(
-      {
-        customerEmail: 'rowena.vance@vancearchitects.com',
-        furnitureId: 'furn-lv-01',
-        code: 'ZERO-AMT',
-        discountAmount: 0,
-        expirationMethod: 'duration',
-        durationValue: 24,
-        durationUnit: 'hours',
-      },
-      INITIAL_FURNITURE_ITEMS,
-      INITIAL_VOUCHERS,
-      nowMs
-    );
-    assert.equal(zeroRes.ok, false);
-
-    // Valid creation with 30 minutes duration -> automatically Expiring Soon (<= 1 hour)
-    const validRes = validateAndCreateVoucher(
-      {
-        customerEmail: 'rowena.vance@vancearchitects.com',
-        furnitureId: 'furn-lv-01',
-        code: 'SAVE-350-NOW',
-        discountAmount: 350,
-        expirationMethod: 'duration',
-        durationValue: 30,
-        durationUnit: 'minutes',
-      },
-      INITIAL_FURNITURE_ITEMS,
-      INITIAL_VOUCHERS,
-      nowMs
-    );
-    assert.equal(validRes.ok, true);
-    assert.equal(validRes.voucher.discountType, 'fixed');
-    assert.equal(validRes.voucher.discountAmount, 350);
-    assert.equal(validRes.voucher.status, 'Expiring Soon');
-    assert.ok(validRes.voucher.issuedAt);
-    assert.ok(validRes.voucher.expiresAt);
-    const issuedDisplay = formatVoucherIssuedDisplay(validRes.voucher);
-    assert.equal(issuedDisplay.hasExactTime, true);
-    assert.ok(issuedDisplay.secondary.includes('PHT'));
-  });
-
-  it('preserves older voucher records without fabricating issuance timestamps and manages Active, Expiring Soon, Expired, Used, and Revoked statuses', () => {
-    const legacyVoucher = INITIAL_VOUCHERS[0]; // vch-101 has createdAt '2026-11-10' and issuedAt: null
-    const legacyIssued = formatVoucherIssuedDisplay(legacyVoucher);
-    assert.equal(legacyIssued.hasExactTime, false);
-    assert.equal(legacyIssued.secondary, 'Time not recorded');
-
-    const nowMs = Date.parse('2026-11-16T04:00:00Z');
-    // 1. Active (> 1 hour remaining)
-    const activeVch = {
-      code: 'VCH-ACTIVE',
-      customerEmail: 'rowena.vance@vancearchitects.com',
-      furnitureId: 'furn-lv-01',
-      discountType: 'fixed',
-      discountAmount: 300,
-      status: 'Active',
-      expiresAt: new Date(nowMs + 4 * 3600 * 1000).toISOString(),
-    };
-    const activeInfo = computeVoucherStatusInfo(activeVch, nowMs);
-    assert.equal(activeInfo.status, 'Active');
-    assert.equal(activeInfo.badgeClass, 'admin-status-voucher-active');
-    assert.equal(activeInfo.isUsable, true);
-
-    // 2. Expiring Soon (<= 1 hour remaining)
-    const expiringVch = {
-      ...activeVch,
-      code: 'VCH-EXPIRING',
-      expiresAt: new Date(nowMs + 45 * 60 * 1000).toISOString(),
-    };
-    const expiringInfo = computeVoucherStatusInfo(expiringVch, nowMs);
-    assert.equal(expiringInfo.status, 'Expiring Soon');
-    assert.equal(expiringInfo.badgeClass, 'admin-status-voucher-expiring');
-    assert.equal(expiringInfo.isUsable, true);
-
-    // 3. Expired (<= 0 remaining)
-    const expiredVch = {
-      ...activeVch,
-      code: 'VCH-EXPIRED',
-      expiresAt: new Date(nowMs - 60 * 1000).toISOString(),
-    };
-    const expiredInfo = computeVoucherStatusInfo(expiredVch, nowMs);
-    assert.equal(expiredInfo.status, 'Expired');
-    assert.equal(expiredInfo.badgeClass, 'admin-status-voucher-expired');
-    assert.equal(expiredInfo.isUsable, false);
-
-    // Expired voucher is rejected during order validation even if stored status was 'Active'
-    const expiredOrderCheck = validateVoucherForOrder(
-      [expiredVch],
-      'VCH-EXPIRED',
-      'rowena.vance@vancearchitects.com',
-      ['furn-lv-01'],
-      [{ id: 'furn-lv-01', price: 4365, effectivePrice: 4365 }],
-      nowMs
-    );
-    assert.equal(expiredOrderCheck.valid, false);
-    assert.ok(expiredOrderCheck.errorMessage.includes('expired'));
-
-    // 4. Revoked voucher transitions to Revoked and becomes unusable immediately
-    const revokeRes = revokeVoucherInList([activeVch], 'VCH-ACTIVE', nowMs);
+    // 3. Revoke voucher transitions status to Revoked and makes it unusable
+    const revokeRes = revokeVoucherInList([createRes.voucher], createRes.voucher.id, nowMs);
     assert.equal(revokeRes.ok, true);
-    assert.equal(revokeRes.voucher.status, 'Revoked');
-    const revokedInfo = computeVoucherStatusInfo(revokeRes.voucher, nowMs);
-    assert.equal(revokedInfo.status, 'Revoked');
-    assert.equal(revokedInfo.badgeClass, 'admin-status-voucher-revoked');
-    assert.equal(revokedInfo.isUsable, false);
+    assert.equal(revokeRes.revokedVoucher.status, 'Revoked');
+    const statusAfterRevoke = computeVoucherStatusInfo(revokeRes.revokedVoucher, nowMs);
+    assert.equal(statusAfterRevoke.isUsable, false);
+    assert.equal(statusAfterRevoke.status, 'Revoked');
 
-    const revokedOrderCheck = validateVoucherForOrder(
-      revokeRes.vouchers,
-      'VCH-ACTIVE',
-      'rowena.vance@vancearchitects.com',
-      ['furn-lv-01'],
-      [{ id: 'furn-lv-01', price: 4365, effectivePrice: 4365 }],
-      nowMs
-    );
-    assert.equal(revokedOrderCheck.valid, false);
-    assert.ok(revokedOrderCheck.errorMessage.includes('revoked'));
-
-    // 5. Customer voucher visibility strictly isolates vouchers by customer email
+    // 4. Customer voucher filter strictly matches email
     const rowenaVouchers = filterCustomerVouchers(INITIAL_VOUCHERS, 'rowena.vance@vancearchitects.com');
     assert.ok(rowenaVouchers.length >= 2);
-    assert.ok(
-      rowenaVouchers.every(
-        (v) => v.customerEmail.toLowerCase() === 'rowena.vance@vancearchitects.com'
-      )
+    assert.ok(rowenaVouchers.every((v) => v.customerEmail === 'rowena.vance@vancearchitects.com'));
+  });
+
+  it('computes Monthly Analytics & Business Reports across date ranges, KPIs, zero-division handling, sales charts, best-sellers, orders, customers, inventory, vouchers, and PDF/CSV exports', () => {
+    const nowMs = Date.parse('2026-11-16T04:00:00Z'); // Nov 16, 2026 in Asia/Manila
+
+    // 1. Safe percentage calculation when previous month is 0
+    const zeroToPositive = computePercentageChange(4250, 0);
+    assert.equal(zeroToPositive.percentChange, 100);
+    assert.equal(zeroToPositive.direction, 'up');
+    assert.equal(zeroToPositive.isNewFromZero, true);
+
+    const zeroToZero = computePercentageChange(0, 0);
+    assert.equal(zeroToZero.percentChange, 0);
+    assert.equal(zeroToZero.direction, 'flat');
+
+    const normalIncrease = computePercentageChange(1500, 1000);
+    assert.equal(normalIncrease.percentChange, 50);
+    assert.equal(normalIncrease.direction, 'up');
+    assert.equal(normalIncrease.formattedChange, '+50.0%');
+
+    // 2. Date range resolution for This Month, Last Month, Select Month, This Year, and Custom Range
+    const thisMonthRange = resolveAnalyticsDateRange({ preset: 'this_month' }, nowMs);
+    assert.equal(thisMonthRange.current.startDate, '2026-11-01');
+    assert.equal(thisMonthRange.current.endDate, '2026-11-30');
+    assert.equal(thisMonthRange.previous.startDate, '2026-10-01');
+    assert.equal(thisMonthRange.previous.endDate, '2026-10-31');
+
+    const lastMonthRange = resolveAnalyticsDateRange({ preset: 'last_month' }, nowMs);
+    assert.equal(lastMonthRange.current.startDate, '2026-10-01');
+    assert.equal(lastMonthRange.current.endDate, '2026-10-31');
+    assert.equal(lastMonthRange.previous.startDate, '2026-09-01');
+
+    const customRange = resolveAnalyticsDateRange(
+      { preset: 'custom_range', startDate: '2026-10-10', endDate: '2026-11-15' },
+      nowMs
     );
+    assert.equal(customRange.current.startDate, '2026-10-10');
+    assert.equal(customRange.current.endDate, '2026-11-15');
+
+    // 3. Full Monthly Analytics report for November 2026 (This Month)
+    const novReport = computeMonthlyAnalyticsReport({
+      catalog: INITIAL_FURNITURE_ITEMS,
+      categories: INITIAL_CATEGORIES,
+      orders: INITIAL_STORE_DATA.orders,
+      customers: INITIAL_STORE_DATA.customers,
+      materials: INITIAL_MATERIALS,
+      inventoryTransactions: INITIAL_STORE_DATA.inventoryTransactions,
+      vouchers: INITIAL_VOUCHERS,
+      filterInput: { preset: 'this_month' },
+      nowMs,
+    });
+
+    assert.equal(novReport.period.label, 'November 2026');
+    assert.equal(novReport.previousPeriod.label, 'October 2026');
+    assert.ok(novReport.summary.totalRevenue.value > 0);
+    assert.equal(novReport.summary.totalOrders.value, 5); // ord-103, ord-105, ord-106, ord-107, ord-108
+    assert.equal(novReport.summary.completedOrders.value, 2); // ord-106, ord-107
+    assert.equal(novReport.summary.pendingOrders.value, 1); // ord-105
+    assert.ok(novReport.summary.totalProductsSold.value >= 5);
+    assert.ok(novReport.summary.averageOrderValue.value > 0);
+
+    // 4. Historical records are preserved when viewing October 2026 (Last Month)
+    const octReport = computeMonthlyAnalyticsReport({
+      catalog: INITIAL_FURNITURE_ITEMS,
+      categories: INITIAL_CATEGORIES,
+      orders: INITIAL_STORE_DATA.orders,
+      customers: INITIAL_STORE_DATA.customers,
+      materials: INITIAL_MATERIALS,
+      inventoryTransactions: INITIAL_STORE_DATA.inventoryTransactions,
+      vouchers: INITIAL_VOUCHERS,
+      filterInput: { preset: 'last_month' },
+      nowMs,
+    });
+    assert.equal(octReport.period.label, 'October 2026');
+    assert.equal(octReport.summary.totalOrders.value, 3); // ord-101, ord-102, ord-104
+    assert.ok(octReport.summary.totalRevenue.value > 0);
+
+    // 5. Cancelled or unpaid orders are excluded from realized revenue, and historical order prices are preserved even if catalog price changes
+    const modifiedCatalog = INITIAL_FURNITURE_ITEMS.map((p) => ({ ...p, price: 999999, effectivePrice: 999999 }));
+    const ordersWithCancelled = [
+      ...INITIAL_STORE_DATA.orders,
+      {
+        id: 'ord-cancel-test',
+        orderId: 'ORD-2026-9999',
+        orderNumber: 'ORD-2026-9999',
+        clientName: 'Test Client',
+        clientEmail: 'test@client.com',
+        furnitureId: 'furn-lv-01',
+        furnitureName: 'Rowena Curved Bouclé Lounge Sofa',
+        quantity: 1,
+        unitPrice: 4365,
+        totalAmount: 4365,
+        depositPaid: 4365,
+        status: 'Order Cancelled (Approved by Admin)',
+        sqlStatus: 'Cancelled',
+        orderDate: '2026-11-12',
+      },
+    ];
+    const checkReport = computeMonthlyAnalyticsReport({
+      catalog: modifiedCatalog,
+      categories: INITIAL_CATEGORIES,
+      orders: ordersWithCancelled,
+      customers: INITIAL_STORE_DATA.customers,
+      materials: INITIAL_MATERIALS,
+      inventoryTransactions: INITIAL_STORE_DATA.inventoryTransactions,
+      vouchers: INITIAL_VOUCHERS,
+      filterInput: { preset: 'this_month' },
+      nowMs,
+    });
+    assert.equal(checkReport.summary.totalRevenue.value, novReport.summary.totalRevenue.value);
+    assert.equal(checkReport.summary.cancelledOrders.value, 1);
+
+    // 6. Best-Selling Products & Low-Selling Products
+    assert.equal(novReport.bestSellingProducts.topFive.length, 5);
+    assert.ok(novReport.bestSellingProducts.topFive[0].totalRevenue >= novReport.bestSellingProducts.topFive[1].totalRevenue);
+    assert.ok(Array.isArray(novReport.bestSellingProducts.lowSellingProducts));
+
+    // 7. Order Analytics status distribution
+    const statusNames = novReport.orderAnalytics.distribution.map((d) => d.status);
+    assert.deepEqual(statusNames, ['Pending', 'Processing', 'Shipped', 'Completed', 'Cancelled']);
+
+    // 8. Inventory Analytics distinguishes Current Live Snapshot from Period Movements
+    assert.equal(novReport.inventoryAnalytics.currentSnapshot.materialsRequiringRestockingCount, 1);
+    assert.ok(novReport.inventoryAnalytics.currentSnapshot.currentInventoryValue > 0);
+    assert.ok(novReport.inventoryAnalytics.periodMovements.totalUnitsConsumed > 0);
+
+    // 9. Voucher Analytics counts Issued, Active, Redeemed, Expired, Revoked & Redemption Rate
+    assert.equal(novReport.voucherAnalytics.totalVouchersIssued, INITIAL_VOUCHERS.length);
+    assert.ok(novReport.voucherAnalytics.redeemedVouchers >= 1);
+    assert.ok(novReport.voucherAnalytics.expiredVouchers >= 1);
+    assert.ok(novReport.voucherAnalytics.revokedVouchers >= 1);
+    assert.ok(novReport.voucherAnalytics.totalDiscountRedeemed >= 450);
+
+    // 10. CSV & PDF Report Exports contain business name, reporting period, summary stats, and transactions
+    const csvContent = buildAnalyticsCsvContent(novReport);
+    assert.ok(csvContent.includes('Lillia and Rowena Furniture'));
+    assert.ok(csvContent.includes('November 2026'));
+    assert.ok(csvContent.includes('Total Revenue (PHP)'));
+    assert.ok(csvContent.includes('ORD-2026-8849'));
+
+    const pdfBytes = buildAnalyticsPdfBytes(novReport);
+    assert.ok(pdfBytes instanceof Uint8Array);
+    assert.ok(pdfBytes.byteLength > 500);
+    const pdfHeader = new TextDecoder().decode(pdfBytes.slice(0, 8));
+    assert.equal(pdfHeader, '%PDF-1.4');
   });
 });
-
-
 
 

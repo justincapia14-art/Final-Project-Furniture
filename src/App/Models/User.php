@@ -25,7 +25,8 @@ class User
      */
     private const DEFAULT_ACCOUNTS = [
         [
-            'id'           => 1,
+            'id'           => 'LR-CUS-301',
+            'customerId'   => 'LR-CUS-301',
             'role'         => 'Customer',
             'fullName'     => 'Rowena Vance',
             'email'        => 'rowena.vance@vancearchitects.com',
@@ -34,7 +35,8 @@ class User
             'address'      => 'Suite 400, 118 Mercer St, SoHo, New York, NY 10013',
         ],
         [
-            'id'           => 2,
+            'id'           => 'LR-CUS-302',
+            'customerId'   => 'LR-CUS-302',
             'role'         => 'Customer',
             'fullName'     => 'Julian Mercier',
             'email'        => 'j.mercier@mercierstudio.co',
@@ -43,7 +45,8 @@ class User
             'address'      => '45 Crosby St, Loft 3B, New York, NY 10012',
         ],
         [
-            'id'           => 3,
+            'id'           => 'LR-CUS-304',
+            'customerId'   => 'LR-CUS-304',
             'role'         => 'Customer',
             'fullName'     => 'Elena Rostova',
             'email'        => 'elena@rostovainteriors.com',
@@ -52,7 +55,8 @@ class User
             'address'      => '720 Park Ave, Apt 9A, New York, NY 10021',
         ],
         [
-            'id'           => 4,
+            'id'           => 'LR-CUS-308',
+            'customerId'   => 'LR-CUS-308',
             'role'         => 'Customer',
             'fullName'     => 'Marcus Sterling',
             'email'        => 'm.sterling@sterlingcapital.io',
@@ -61,7 +65,8 @@ class User
             'address'      => '15 Central Park West, New York, NY 10023',
         ],
         [
-            'id'           => 5,
+            'id'           => 'LR-CUS-315',
+            'customerId'   => 'LR-CUS-315',
             'role'         => 'Customer',
             'fullName'     => 'Clara Vance',
             'email'        => 'clara.vance@architects.io',
@@ -70,7 +75,8 @@ class User
             'address'      => '412 Mercer St, Penthouse B, New York, NY 10013',
         ],
         [
-            'id'           => 6,
+            'id'           => 'LR-CUS-319',
+            'customerId'   => 'LR-CUS-319',
             'role'         => 'Customer',
             'fullName'     => 'Julian Thorne',
             'email'        => 'j.thorne@studio-thorne.com',
@@ -79,7 +85,8 @@ class User
             'address'      => '88 Pacific Ave, San Francisco, CA 94111',
         ],
         [
-            'id'           => 1,
+            'id'           => 'ADM-LR-901',
+            'adminId'      => 'ADM-LR-901',
             'role'         => 'Admin',
             'fullName'     => 'Lillia Mercier (Business Owner)',
             'email'        => 'admin@lilliarowena.com',
@@ -251,12 +258,14 @@ class User
         }
 
         $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+        $customerId = 'LR-CUS-' . (320 + (abs((int) crc32($email . '|' . microtime(true))) % 679));
 
         if ($this->db->isMySqlConnected()) {
             $this->db->query(
-                'INSERT INTO Customer (FullName, Email, PasswordHash, PhoneNumber, Address)
-                 VALUES (:name, :email, :hash, :phone, :addr)',
+                'INSERT INTO Customer (CustomerID, FullName, Email, PasswordHash, PhoneNumber, Address)
+                 VALUES (:id, :name, :email, :hash, :phone, :addr)',
                 [
+                    ':id'    => $customerId,
                     ':name'  => $fullName,
                     ':email' => $email,
                     ':hash'  => $passwordHash,
@@ -264,14 +273,12 @@ class User
                     ':addr'  => $address ?: null,
                 ]
             );
-            $pdo = $this->db->getConnection();
-            $customerId = $pdo ? (int) $pdo->lastInsertId() : 100;
         } else {
             $store = $this->db->readStore();
             $customers = isset($store['customers']) && is_array($store['customers']) ? $store['customers'] : [];
-            $customerId = count($customers) + 10;
             $newCustomer = [
                 'id'           => $customerId,
+                'customerId'   => $customerId,
                 'role'         => 'Customer',
                 'fullName'     => $fullName,
                 'name'         => $fullName,
@@ -289,6 +296,7 @@ class User
 
         return [
             'id'          => $customerId,
+            'customerId'  => $customerId,
             'role'        => 'Customer',
             'fullName'    => $fullName,
             'email'       => $email,

@@ -28,6 +28,78 @@ const DEFAULT_CATEGORY_IMAGES = {
   kitchen: 'assets/images/category_dining_tables.jpg',
 };
 
+const CATEGORY_CODE_PREFIXES = {
+  living: 'LV',
+  dining: 'DN',
+  bedroom: 'BD',
+  office: 'OF',
+  kitchen: 'KT',
+};
+
+export function generateOwnEntityId(entityType = 'entity', seed = '', categoryId = '') {
+  const cleanSeed = String(seed || '').trim();
+  const cleanCategory = String(categoryId || '').trim().toLowerCase();
+  let hash = 2166136261;
+  const source = `${entityType}:${cleanSeed}:${cleanCategory}:${Date.now()}:${Math.random()}`;
+  for (let i = 0; i < source.length; i += 1) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const unsigned = Math.abs(hash >>> 0);
+  const ranges = {
+    product: [100, 999],
+    order: [8100, 9899],
+    material: [10, 99],
+    customer: [300, 999],
+    voucher: [700, 999],
+    orderItem: [5100, 5999],
+    customization: [6100, 6999],
+    task: [2100, 2999],
+    payment: [9100, 9999],
+  };
+  const [minVal, maxVal] = ranges[entityType] || [100, 999];
+  const numericId = minVal + (unsigned % (maxVal - minVal + 1));
+
+  let codeId = `${entityType.toUpperCase()}-${numericId}`;
+  if (entityType === 'product') {
+    const matchedPrefix =
+      CATEGORY_CODE_PREFIXES[cleanCategory] ||
+      (cleanSeed.match(/^LR-([A-Z]{2,3})-/i)?.[1] || 'LV').toUpperCase();
+    codeId = `LR-${matchedPrefix}-${String(numericId).padStart(3, '0')}`;
+  } else if (entityType === 'order') {
+    codeId = `ORD-2026-${numericId}`;
+  } else if (entityType === 'material') {
+    const letters =
+      cleanSeed
+        .replace(/^MAT-/i, '')
+        .replace(/[^a-zA-Z]/g, '')
+        .toUpperCase()
+        .slice(0, 3) || 'TIM';
+    codeId = `MAT-${letters.padEnd(3, 'X')}-${String(numericId).padStart(2, '0')}`;
+  } else if (entityType === 'customer') {
+    codeId = `LR-CUS-${numericId}`;
+  } else if (entityType === 'voucher') {
+    codeId = `VCH-LR-${numericId}`;
+  } else if (entityType === 'orderItem') {
+    codeId = `ITM-2026-${numericId}`;
+  } else if (entityType === 'customization') {
+    codeId = `CSM-2026-${numericId}`;
+  } else if (entityType === 'task') {
+    codeId = `TSK-2026-${numericId}`;
+  } else if (entityType === 'payment') {
+    codeId = `PAY-2026-${numericId}`;
+  }
+
+  return {
+    numericId,
+    codeId,
+  };
+}
+
+export function generateProductCode(categoryId = 'living', seed = '') {
+  return generateOwnEntityId('product', seed, categoryId).codeId;
+}
+
 export function buildProductRecord(input, existingProduct = null) {
   const rawType = String(
     input?.productType ??
@@ -110,10 +182,31 @@ export function buildProductRecord(input, existingProduct = null) {
   const rawMinStock = input?.minStockLevel ?? existingProduct?.minStockLevel ?? 2;
   const minStockLevel = Math.max(0, Math.floor(Number.isFinite(Number(rawMinStock)) ? Number(rawMinStock) : 2));
 
+  const rawSkuInput = String(
+    input?.sku ??
+      input?.productId ??
+      existingProduct?.productId ??
+      existingProduct?.sku ??
+      ''
+  )
+    .trim()
+    .toUpperCase();
+  const hasExplicitProductCode =
+    rawSkuInput.length >= 4 &&
+    rawSkuInput !== 'LR-NEW-001' &&
+    !/^\d+$/.test(rawSkuInput);
+  const resolvedProductId = hasExplicitProductCode
+    ? rawSkuInput
+    : generateOwnEntityId('product', input?.name || '', categoryId).codeId;
+
   return {
     ...(existingProduct || {}),
-    id: existingProduct?.id || input?.id || `furn-${isCustomized ? 'cust' : 'std'}-${Date.now()}`,
-    sku: String(input?.sku ?? existingProduct?.sku ?? 'LR-NEW-001').trim().toUpperCase(),
+    id:
+      existingProduct?.id ||
+      input?.id ||
+      `furn-${isCustomized ? 'cust' : 'std'}-${resolvedProductId.toLowerCase()}`,
+    productId: resolvedProductId,
+    sku: resolvedProductId,
     name: String(input?.name ?? existingProduct?.name ?? 'Untitled Piece').trim(),
     categoryId,
     categoryName,
@@ -516,7 +609,7 @@ export function formatVoucherBenefitLabel(voucher) {
     return `${pct}% OFF`;
   }
   const amt = Number(voucher.discountAmount ?? voucher.discountValue ?? 0);
-  return `$${Math.round(amt).toLocaleString('en-US')} OFF`;
+  return `₱${Math.round(amt).toLocaleString('en-US')} OFF`;
 }
 
 export function validateVoucherForOrder(
@@ -858,10 +951,18 @@ export function verifyAndCreateOrder({
   const pricing = calculateOrderPricing(normalizedLines, validatedVoucher, catalog);
   const firstEntry = normalizedLines[0];
   const totalQty = normalizedLines.reduce((sum, l) => sum + l.quantity, 0);
-  const ordNum = `ORD-2026-${Math.floor(8900 + Math.random() * 999)}`;
+  const generatedOrderId = generateOwnEntityId('order', activeEmail).codeId;
+  const generatedOrderItemId = generateOwnEntityId('orderItem', `${generatedOrderId}-${firstEntry.productId}`).codeId;
+  const generatedTaskId = generateOwnEntityId('task', `${generatedOrderId}`).codeId;
+  const generatedPaymentId = generateOwnEntityId('payment', `${generatedOrderId}`).codeId;
+  const ordNum = generatedOrderId;
 
   const orderRecord = {
-    id: `ord-${Date.now()}`,
+    id: `ord-${ordNum.toLowerCase()}`,
+    orderId: ordNum,
+    orderItemId: generatedOrderItemId,
+    taskId: generatedTaskId,
+    paymentId: generatedPaymentId,
     orderNumber: ordNum,
     clientName: customerProfile?.name || sessionUser?.name || 'Rowena Vance',
     clientEmail: activeEmail,
@@ -984,13 +1085,23 @@ export function createCustomOrderRequest({
   const totalAmount = rawSubtotal + deliveryFee;
   const depositPaid = Math.round(totalAmount * 0.5);
 
-  const ordNum = `ORD-2026-${Math.floor(8900 + Math.random() * 999)}`;
   const activeEmail =
     customerProfile?.email || sessionUser?.email || 'rowena.vance@vancearchitects.com';
+  const generatedOrderId = generateOwnEntityId('order', `${activeEmail}-${product.id}`).codeId;
+  const generatedOrderItemId = generateOwnEntityId('orderItem', `${generatedOrderId}-${product.id}`).codeId;
+  const generatedCustomizationId = generateOwnEntityId('customization', `${generatedOrderId}`).codeId;
+  const generatedTaskId = generateOwnEntityId('task', `${generatedOrderId}`).codeId;
+  const generatedPaymentId = generateOwnEntityId('payment', `${generatedOrderId}`).codeId;
+  const ordNum = generatedOrderId;
   const customDimensions = `${Math.round(lengthCm)}cm L × ${Math.round(widthCm)}cm W × ${Math.round(heightCm)}cm H`;
 
   const orderRecord = {
-    id: `ord-cust-${Date.now()}`,
+    id: `ord-cust-${ordNum.toLowerCase()}`,
+    orderId: ordNum,
+    orderItemId: generatedOrderItemId,
+    customizationId: generatedCustomizationId,
+    taskId: generatedTaskId,
+    paymentId: generatedPaymentId,
     orderNumber: ordNum,
     clientName: customerProfile?.name || sessionUser?.name || 'Rowena Vance',
     clientEmail: activeEmail,
@@ -1066,6 +1177,66 @@ export function createCustomOrderRequest({
   };
 }
 
+export function isOrderCompleted(order) {
+  if (!order || typeof order !== 'object') return false;
+  const statusStr = String(order.status || '');
+  if (/Cancelled/i.test(statusStr) || order.sqlStatus === 'Cancelled') return false;
+  if (order.isCompleted === true) return true;
+  if (/Completed|Delivered/i.test(statusStr)) return true;
+  if (order.sqlStatus === 'Delivered' && !/Dispatched|Transit/i.test(statusStr)) return true;
+  return false;
+}
+
+export function partitionOrdersByCompletion(orders = []) {
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  const activeOrders = [];
+  const completedOrders = [];
+
+  safeOrders.forEach((ord) => {
+    if (!ord || typeof ord !== 'object') return;
+    if (isOrderCompleted(ord)) {
+      completedOrders.push(ord);
+    } else {
+      activeOrders.push(ord);
+    }
+  });
+
+  return {
+    activeOrders,
+    completedOrders,
+  };
+}
+
+export function getCompletedTransactionsForCustomer(orders = [], customerEmail = '') {
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  const cleanEmail = String(customerEmail || '').trim().toLowerCase();
+  const matchingCompleted = safeOrders.filter((ord) => {
+    if (!ord || typeof ord !== 'object') return false;
+    if (cleanEmail && String(ord.clientEmail || '').trim().toLowerCase() !== cleanEmail) {
+      return false;
+    }
+    return isOrderCompleted(ord);
+  });
+
+  return matchingCompleted.map((ord, idx) => {
+    const totalAmt = Math.max(0, Number(ord.totalAmount || 0));
+    const paidAmt = Math.max(totalAmt, Number(ord.depositPaid ?? totalAmt));
+    const ordSuffix = String(ord.orderNumber || '').split('-').pop() || String(9941 - idx * 12);
+    return {
+      txId: ord.transactionReference || `TXN-2026-${ordSuffix}`,
+      date: ord.completedAt || ord.lastPaymentAt || ord.orderDate || '2026-10-28',
+      orderNumber: ord.orderNumber,
+      piece: ord.furnitureName,
+      finish: ord.selectedFinish,
+      dimensions: ord.customDimensions || 'Standard Dimensions',
+      itemType: ord.itemType || 'Standard',
+      quantity: Math.max(1, Number(ord.quantity || 1)),
+      amount: paidAmt,
+      status: 'Completed',
+    };
+  });
+}
+
 export function applyAdminOrderUpdate(orderOrParams, updatesArg = {}) {
   if (!orderOrParams || typeof orderOrParams !== 'object') return null;
 
@@ -1079,36 +1250,161 @@ export function applyAdminOrderUpdate(orderOrParams, updatesArg = {}) {
   }
 
   const next = { ...orderOrParams, ...(updatesArg || {}) };
+  const ordSuffix = String(next.orderNumber || '').split('-').pop() || '9001';
 
   if (updatesArg?.status && !updatesArg?.sqlStatus) {
     if (/Confirmed|Pending|Timber/i.test(updatesArg.status)) {
       next.sqlStatus = 'Pending';
       next.taskStatus = next.taskStatus === 'Done' ? 'InProgress' : next.taskStatus || 'Todo';
+      next.isCompleted = false;
     } else if (/Joinery|Finishing|Millwork|Production/i.test(updatesArg.status)) {
       next.sqlStatus = 'InProduction';
       next.taskStatus = 'InProgress';
+      next.isCompleted = false;
     } else if (/Quality|Ready/i.test(updatesArg.status)) {
       next.sqlStatus = 'Ready';
       next.taskStatus = 'Done';
-    } else if (/Dispatched|Delivered/i.test(updatesArg.status)) {
+      next.isCompleted = false;
+    } else if (/Completed|Delivered/i.test(updatesArg.status)) {
       next.sqlStatus = 'Delivered';
       next.taskStatus = 'Done';
+      next.deliveryStatus = 'Delivered';
+      next.isCompleted = true;
+      next.completedAt = next.completedAt || new Date().toISOString().slice(0, 10);
+      next.transactionReference = next.transactionReference || `TXN-2026-${ordSuffix}`;
+      next.depositPaid = Math.max(Number(next.depositPaid || 0), Number(next.totalAmount || 0));
+      next.paymentStatus = 'Paid in Full';
+      next.cancellationRequested = false;
+    } else if (/Dispatched/i.test(updatesArg.status)) {
+      next.sqlStatus = 'Ready';
+      next.taskStatus = 'Done';
       if (next.deliveryStatus === 'Scheduled') next.deliveryStatus = 'InTransit';
+      next.isCompleted = false;
     } else if (/Cancelled/i.test(updatesArg.status)) {
       next.sqlStatus = 'Cancelled';
+      next.isCompleted = false;
     }
   }
 
-  if (updatesArg?.deliveryStatus === 'Delivered') {
+  if (updatesArg?.deliveryStatus === 'Delivered' || updatesArg?.isCompleted === true) {
     next.sqlStatus = 'Delivered';
     next.taskStatus = 'Done';
-    next.status = 'Delivered · White-Glove Installation Complete';
-  } else if (updatesArg?.deliveryStatus === 'InTransit' && !/Dispatched|Delivered/i.test(next.status)) {
+    next.deliveryStatus = 'Delivered';
+    if (!/Completed|Delivered/i.test(String(next.status || ''))) {
+      next.status = 'Delivered · Completed';
+    }
+    next.isCompleted = true;
+    next.completedAt = next.completedAt || new Date().toISOString().slice(0, 10);
+    next.transactionReference = next.transactionReference || `TXN-2026-${ordSuffix}`;
+    next.depositPaid = Math.max(Number(next.depositPaid || 0), Number(next.totalAmount || 0));
+    next.paymentStatus = 'Paid in Full';
+    next.cancellationRequested = false;
+  } else if (updatesArg?.deliveryStatus === 'InTransit' && !/Dispatched|Delivered|Completed/i.test(next.status)) {
     next.status = 'Dispatched · White-Glove Transit';
     next.sqlStatus = 'Ready';
+    next.isCompleted = false;
   }
 
   return next;
+}
+
+export function requestOrderCancellation({
+  orders = [],
+  orderNumber = '',
+  reason = 'Customer requested order cancellation',
+}) {
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  const cleanOrderNum = String(orderNumber || '').trim();
+  const target = safeOrders.find((o) => o.orderNumber === cleanOrderNum);
+  if (!target) {
+    return {
+      ok: false,
+      errorMessage: 'Order not found.',
+      updatedOrders: safeOrders,
+      updatedOrder: null,
+    };
+  }
+  if (/Cancelled/i.test(String(target.status || '')) || target.sqlStatus === 'Cancelled') {
+    return {
+      ok: false,
+      errorMessage: 'Order is already cancelled.',
+      updatedOrders: safeOrders,
+      updatedOrder: target,
+    };
+  }
+  if (target.cancellationRequested) {
+    return {
+      ok: false,
+      errorMessage: 'A cancellation request for this order is already pending Admin review.',
+      updatedOrders: safeOrders,
+      updatedOrder: target,
+    };
+  }
+
+  const updatedOrder = {
+    ...target,
+    cancellationRequested: true,
+    cancellationStatus: 'Pending Admin Approval',
+    cancellationRequestedAt: new Date().toISOString().slice(0, 10),
+    cancellationReason: String(reason || 'Customer requested order cancellation').trim(),
+  };
+  const updatedOrders = safeOrders.map((o) =>
+    o.orderNumber === cleanOrderNum ? updatedOrder : o
+  );
+
+  return {
+    ok: true,
+    errorMessage: '',
+    updatedOrders,
+    updatedOrder,
+  };
+}
+
+export function resolveOrderCancellationRequest({
+  orders = [],
+  orderNumber = '',
+  decision = 'approve',
+}) {
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  const cleanOrderNum = String(orderNumber || '').trim();
+  const target = safeOrders.find((o) => o.orderNumber === cleanOrderNum);
+  if (!target) {
+    return {
+      ok: false,
+      errorMessage: 'Order not found.',
+      decision: '',
+      updatedOrders: safeOrders,
+      updatedOrder: null,
+    };
+  }
+
+  const normalizedDecision = String(decision || 'approve').trim().toLowerCase();
+  const isApproved = normalizedDecision === 'approve' || normalizedDecision === 'approved';
+
+  const updatedOrder = isApproved
+    ? applyAdminOrderUpdate(target, {
+        status: 'Cancelled · Approved by Admin',
+        sqlStatus: 'Cancelled',
+        cancellationRequested: false,
+        cancellationStatus: 'Approved',
+      })
+    : {
+        ...target,
+        cancellationRequested: false,
+        cancellationStatus: 'Declined',
+      };
+
+  const updatedOrders = safeOrders.map((o) =>
+    o.orderNumber === cleanOrderNum ? updatedOrder : o
+  );
+
+  return {
+    ok: true,
+    errorMessage: '',
+    decision: isApproved ? 'approved' : 'declined',
+    updatedOrders,
+    updatedOrder,
+  };
 }
 
 export function recordCustomerOrderPayment(orderOrParams, amountToPay = null) {
@@ -1179,7 +1475,7 @@ export function validateNewFurnitureInput(input) {
     return { valid: false, errorMessage: 'SKU Code must be at least 4 characters (e.g., LR-DN-210).' };
   }
   if (!Number.isFinite(price) || price < 50) {
-    return { valid: false, errorMessage: 'Base Price must be at least $50.' };
+    return { valid: false, errorMessage: 'Base Price must be at least ₱50.' };
   }
   if (!Number.isFinite(inStockCount) || inStockCount < 0) {
     return { valid: false, errorMessage: 'Stock quantity cannot be negative.' };
@@ -1225,21 +1521,29 @@ export function buildMaterialRecord(input, existingMaterial = null) {
   const minStockLevel = Math.max(0, Number(input?.minStockLevel ?? existingMaterial?.minStockLevel ?? 10));
   const unitCost = Math.max(0, Number(input?.unitCost ?? existingMaterial?.unitCost ?? 25));
 
-  const code = String(
+  const rawMatCode = String(
     input?.code ??
       input?.sku ??
+      input?.materialId ??
+      existingMaterial?.materialId ??
       existingMaterial?.code ??
       existingMaterial?.sku ??
-      `MAT-${Math.floor(100 + Math.random() * 899)}`
+      ''
   )
     .trim()
     .toUpperCase();
 
+  const hasExplicitMatCode = rawMatCode.length >= 4 && !/^\d+$/.test(rawMatCode);
+  const resolvedMaterialId = hasExplicitMatCode
+    ? rawMatCode
+    : generateOwnEntityId('material', input?.name ?? input?.materialName ?? 'TIM').codeId;
+
   return {
     ...(existingMaterial || {}),
-    id: existingMaterial?.id || input?.id || `mat-${Date.now()}`,
-    code,
-    sku: code,
+    id: existingMaterial?.id || input?.id || `mat-${resolvedMaterialId.toLowerCase()}`,
+    materialId: resolvedMaterialId,
+    code: resolvedMaterialId,
+    sku: resolvedMaterialId,
     name: String(input?.name ?? input?.materialName ?? existingMaterial?.name ?? 'Raw Material').trim(),
     materialType: String(input?.materialType ?? existingMaterial?.materialType ?? 'Solid Timber').trim(),
     unit: String(input?.unit ?? existingMaterial?.unit ?? 'bd ft').trim(),
@@ -1427,26 +1731,44 @@ export function paginateItems(items = [], currentPage = 1, pageSize = 5) {
 export function computeCustomerDirectory(orders = [], customers = [], customerProfile = null) {
   const byEmail = new Map();
 
+  const deriveCustomerOwnId = (emailStr, explicitId = null) => {
+    const cleanExplicit = String(explicitId ?? '').trim().toUpperCase();
+    if (cleanExplicit && cleanExplicit !== 'CUST-PROFILE' && !/^\d+$/.test(cleanExplicit)) {
+      return cleanExplicit;
+    }
+    let hash = 0;
+    const clean = String(emailStr || '').trim().toLowerCase();
+    for (let i = 0; i < clean.length; i += 1) {
+      hash = (hash * 31 + clean.charCodeAt(i)) % 699;
+    }
+    return `LR-CUS-${300 + Math.abs(hash)}`;
+  };
+
   const upsert = (entry) => {
     const email = String(entry?.email || '').trim().toLowerCase();
     if (!email || email === 'admin@lilliarowena.com' || entry?.role === 'admin') return;
+    const resolvedCustId = deriveCustomerOwnId(email, entry?.customerId ?? entry?.id);
     const existing = byEmail.get(email) || {
-      id: entry.id || `cust-${byEmail.size + 101}`,
-      name: entry.name || 'Client',
+      id: entry.id && String(entry.id) !== 'cust-profile' ? entry.id : `cust-${resolvedCustId}`,
+      customerId: resolvedCustId,
+      name: entry.name || entry.fullName || 'Client',
       email: entry.email.trim(),
-      phone: entry.phone || '+1 (212) 555-0140',
+      phone: entry.phone || entry.phoneNumber || '+1 (212) 555-0140',
       address: entry.address || 'Showroom Registered Client',
       company: entry.company || 'Private Residence',
+      avatar: String(entry.avatar || '').trim(),
       orderCount: 0,
       totalSpent: 0,
       lastOrderDate: '—',
     };
     byEmail.set(email, {
       ...existing,
-      name: entry.name || existing.name,
-      phone: entry.phone || existing.phone,
+      customerId: existing.customerId || resolvedCustId,
+      name: entry.name || entry.fullName || existing.name,
+      phone: entry.phone || entry.phoneNumber || existing.phone,
       address: entry.address || existing.address,
       company: entry.company || existing.company,
+      avatar: String(entry.avatar ?? existing.avatar ?? '').trim(),
     });
   };
 
@@ -1457,12 +1779,13 @@ export function computeCustomerDirectory(orders = [], customers = [], customerPr
     customerProfile.role !== 'admin'
   ) {
     upsert({
-      id: 'cust-profile',
+      id: customerProfile.customerId || customerProfile.id || null,
       name: customerProfile.name,
       email: customerProfile.email,
       phone: customerProfile.phone,
       address: [customerProfile.address, customerProfile.city].filter(Boolean).join(', '),
       company: 'Vance & Associates Spatial Design',
+      avatar: customerProfile.avatar || '',
     });
   }
 
@@ -1472,8 +1795,10 @@ export function computeCustomerDirectory(orders = [], customers = [], customerPr
     const email = String(ord?.clientEmail || '').trim().toLowerCase();
     if (!email || email === 'admin@lilliarowena.com') return;
     if (!byEmail.has(email)) {
+      const custOwnId = deriveCustomerOwnId(email);
       upsert({
-        id: `cust-${byEmail.size + 101}`,
+        id: `cust-${custOwnId}`,
+        customerId: custOwnId,
         name: ord.clientName || 'Showroom Client',
         email: ord.clientEmail,
         phone: '+1 (212) 555-0192',
@@ -2020,6 +2345,29 @@ export function formatCustomerProductDisplay(item, selectedFinishName) {
   };
 }
 
+export function formatSimplifiedProductCardData(item, selectedFinishName) {
+  const display = formatCustomerProductDisplay(item, selectedFinishName);
+  return {
+    id: String(item?.id || '').trim(),
+    image: display.image,
+    name: display.name,
+    categoryName: display.categoryName,
+    originalPrice: display.hasDiscount ? display.variantBasePrice : null,
+    sellingPrice: display.effectivePrice,
+    discountPercent: display.discountPercent,
+    hasDiscount: display.hasDiscount,
+    description: display.description,
+    availabilityLabel: display.availabilityLabel,
+    availableStock: display.availableStock,
+    isOutOfStock: display.isOutOfStock,
+    isLowStock: display.isLowStock,
+    dimensions: display.dimensions,
+    leadTimeWeeks: display.leadTimeWeeks,
+    shippingTimeLabel: `Ships in ${display.leadTimeWeeks} ${display.leadTimeWeeks === 1 ? 'week' : 'weeks'}`,
+    ctaLabel: 'View Product',
+  };
+}
+
 export function resolveAuthNavigationState(rawSessionUser) {
   let sessionObj = rawSessionUser;
   if (typeof rawSessionUser === 'string') {
@@ -2048,6 +2396,7 @@ export function resolveAuthNavigationState(rawSessionUser) {
       userDisplayName: '',
       userInitials: '',
       userEmail: '',
+      userAvatar: '',
       accountLinks: {
         signIn: { href: 'login.html', label: 'Sign In' },
         register: { href: 'login.html?mode=register', label: 'Register' },
@@ -2077,6 +2426,7 @@ export function resolveAuthNavigationState(rawSessionUser) {
       .slice(0, 2)
       .map((part) => (part[0] || '').toUpperCase())
       .join('') || (isAdmin ? 'AD' : 'CU');
+  const userAvatar = String(sessionObj?.avatar || '').trim();
 
   if (isAdmin) {
     return {
@@ -2092,6 +2442,7 @@ export function resolveAuthNavigationState(rawSessionUser) {
       userDisplayName,
       userInitials,
       userEmail: email,
+      userAvatar,
       accountLinks: {
         signIn: null,
         register: null,
@@ -2120,6 +2471,7 @@ export function resolveAuthNavigationState(rawSessionUser) {
     userDisplayName,
     userInitials,
     userEmail: email,
+    userAvatar,
     accountLinks: {
       signIn: null,
       register: null,
@@ -2132,6 +2484,38 @@ export function resolveAuthNavigationState(rawSessionUser) {
     heroOrderLink: { href: 'dashboard.html?role=client&tab=orders', label: 'My Orders →' },
     cartCheckoutCta: { href: 'dashboard.html?role=client&tab=cart', label: 'Proceed to Checkout →' },
     cartVoucherHint: email,
+  };
+}
+
+export function resolveCustomerAvatarState(profile = {}) {
+  const displayName = String(profile?.name || profile?.fullName || 'Client').trim() || 'Client';
+  const initials =
+    displayName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => (part[0] || '').toUpperCase())
+      .join('') || 'CU';
+  const rawAvatar = String(profile?.avatar || '').trim();
+  if (!rawAvatar) {
+    return {
+      hasAvatar: false,
+      avatarSrc: '',
+      initials,
+      displayName,
+    };
+  }
+  const normalizedSrc =
+    rawAvatar.startsWith('data:') ||
+    rawAvatar.startsWith('http://') ||
+    rawAvatar.startsWith('https://')
+      ? rawAvatar
+      : rawAvatar.replace(/^\//, '');
+  return {
+    hasAvatar: Boolean(normalizedSrc),
+    avatarSrc: normalizedSrc,
+    initials,
+    displayName,
   };
 }
 
@@ -2155,7 +2539,7 @@ export function validateAndBuildOfferProposal(offerInput = {}, product = null, s
   ) {
     return {
       ok: false,
-      errorMessage: 'Please enter a valid proposed price greater than $0.',
+      errorMessage: 'Please enter a valid proposed price greater than ₱0.',
       proposal: null,
     };
   }
@@ -2163,7 +2547,7 @@ export function validateAndBuildOfferProposal(offerInput = {}, product = null, s
   if (numericProposed < 25) {
     return {
       ok: false,
-      errorMessage: 'Proposed price must be at least $25.',
+      errorMessage: 'Proposed price must be at least ₱25.',
       proposal: null,
     };
   }
@@ -2520,7 +2904,7 @@ export function validateAndCreateVoucher(
   if (!Number.isFinite(rawDiscount) || rawDiscount <= 0) {
     return {
       ok: false,
-      errorMessage: 'Discount Amount ($) must be greater than $0.',
+      errorMessage: 'Discount Amount (₱) must be greater than ₱0.',
       voucher: null,
     };
   }
@@ -2531,7 +2915,7 @@ export function validateAndCreateVoucher(
   if (maxProductPrice > 0 && discountAmount > maxProductPrice) {
     return {
       ok: false,
-      errorMessage: `Discount Amount ($${discountAmount.toLocaleString('en-US')}) cannot exceed the eligible product's price ($${maxProductPrice.toLocaleString('en-US')} for ${matchedProduct.name}).`,
+      errorMessage: `Discount Amount (₱${discountAmount.toLocaleString('en-US')}) cannot exceed the eligible product's price (₱${maxProductPrice.toLocaleString('en-US')} for ${matchedProduct.name}).`,
       voucher: null,
     };
   }
@@ -2576,8 +2960,14 @@ export function validateAndCreateVoucher(
     nowMs
   );
 
+  const generatedVoucherCodeId =
+    input?.voucherId && !/^\d+$/.test(String(input.voucherId).trim())
+      ? String(input.voucherId).trim().toUpperCase()
+      : generateOwnEntityId('voucher', code).codeId;
+
   const voucher = {
     id: input?.id || `vch-${nowMs}`,
+    voucherId: generatedVoucherCodeId,
     code,
     customerEmail,
     customerName,
@@ -2658,6 +3048,1364 @@ export function filterCustomerVouchers(vouchers = [], customerEmail = '') {
     (v) => String(v?.customerEmail || '').trim().toLowerCase() === cleanEmail
   );
 }
+
+/* ==========================================================================
+   MONTHLY ANALYTICS & BUSINESS REPORTS ENGINE (ADMIN DASHBOARD)
+   ========================================================================== */
+
+const MONTH_NAMES_FULL = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+const MONTH_NAMES_SHORT = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+function getDaysInYearMonth(year, month1To12) {
+  return new Date(Date.UTC(year, month1To12, 0)).getUTCDate();
+}
+
+function pad2(num) {
+  return String(Math.max(0, Math.floor(Number(num) || 0))).padStart(2, '0');
+}
+
+function formatYmd(year, month1To12, day) {
+  return `${year}-${pad2(month1To12)}-${pad2(day)}`;
+}
+
+function parseManilaDateOnly(rawDateStr) {
+  if (!rawDateStr) return null;
+  const clean = String(rawDateStr).trim();
+  const ymdMatch = clean.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymdMatch) {
+    return `${ymdMatch[1]}-${ymdMatch[2]}-${ymdMatch[3]}`;
+  }
+  const ms = Date.parse(clean);
+  if (Number.isNaN(ms)) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(ms));
+  const map = {};
+  for (const p of parts) map[p.type] = p.value;
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+export function computePercentageChange(currentValue, previousValue) {
+  const curr = Number(currentValue) || 0;
+  const prev = Number(previousValue) || 0;
+
+  if (Math.abs(prev) < 0.0001) {
+    if (Math.abs(curr) < 0.0001) {
+      return {
+        percentChange: 0,
+        direction: 'neutral',
+        formatted: '0.0%',
+        badgeLabel: '0.0% vs prior period',
+        previousZero: true,
+      };
+    }
+    return {
+      percentChange: curr > 0 ? 100 : -100,
+      direction: curr > 0 ? 'up' : 'down',
+      formatted: curr > 0 ? '+100.0%' : '-100.0%',
+      badgeLabel: curr > 0 ? '+100.0% (up from 0)' : '-100.0%',
+      previousZero: true,
+    };
+  }
+
+  const rawPct = ((curr - prev) / Math.abs(prev)) * 100;
+  const pct = Math.round(rawPct * 10) / 10;
+  const direction = pct > 0 ? 'up' : pct < 0 ? 'down' : 'neutral';
+  const sign = pct > 0 ? '+' : '';
+  const formatted = `${sign}${pct.toFixed(1)}%`;
+
+  return {
+    percentChange: pct,
+    direction,
+    formatted,
+    badgeLabel: `${formatted} vs prior period`,
+    previousZero: false,
+  };
+}
+
+export function resolveAnalyticsDateRange(filterOptions = {}, nowMs = Date.now()) {
+  const nowParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(nowMs));
+  const nMap = {};
+  for (const p of nowParts) nMap[p.type] = p.value;
+  const currentYear = Number(nMap.year);
+  const currentMonth = Number(nMap.month);
+
+  const preset = String(filterOptions?.preset || 'this_month')
+    .trim()
+    .toLowerCase();
+
+  let startDate = '';
+  let endDate = '';
+  let previousStartDate = '';
+  let previousEndDate = '';
+  let periodLabel = '';
+  let previousPeriodLabel = '';
+  let selectedYear = Number(filterOptions?.year) || currentYear;
+  let selectedMonth = Math.min(12, Math.max(1, Number(filterOptions?.month) || currentMonth));
+
+  if (preset === 'last_month') {
+    const lmYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+    const lmMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+    const lmDays = getDaysInYearMonth(lmYear, lmMonth);
+    startDate = formatYmd(lmYear, lmMonth, 1);
+    endDate = formatYmd(lmYear, lmMonth, lmDays);
+
+    const prevYear = lmMonth === 1 ? lmYear - 1 : lmYear;
+    const prevMonth = lmMonth === 1 ? 12 : lmMonth - 1;
+    const prevDays = getDaysInYearMonth(prevYear, prevMonth);
+    previousStartDate = formatYmd(prevYear, prevMonth, 1);
+    previousEndDate = formatYmd(prevYear, prevMonth, prevDays);
+
+    selectedYear = lmYear;
+    selectedMonth = lmMonth;
+    periodLabel = `${MONTH_NAMES_FULL[lmMonth - 1]} ${lmYear}`;
+    previousPeriodLabel = `${MONTH_NAMES_FULL[prevMonth - 1]} ${prevYear}`;
+  } else if (preset === 'select_month') {
+    const smDays = getDaysInYearMonth(selectedYear, selectedMonth);
+    startDate = formatYmd(selectedYear, selectedMonth, 1);
+    endDate = formatYmd(selectedYear, selectedMonth, smDays);
+
+    const prevYear = selectedMonth === 1 ? selectedYear - 1 : selectedYear;
+    const prevMonth = selectedMonth === 1 ? 12 : selectedMonth - 1;
+    const prevDays = getDaysInYearMonth(prevYear, prevMonth);
+    previousStartDate = formatYmd(prevYear, prevMonth, 1);
+    previousEndDate = formatYmd(prevYear, prevMonth, prevDays);
+
+    periodLabel = `${MONTH_NAMES_FULL[selectedMonth - 1]} ${selectedYear}`;
+    previousPeriodLabel = `${MONTH_NAMES_FULL[prevMonth - 1]} ${prevYear}`;
+  } else if (preset === 'this_year') {
+    const targetYear = Number(filterOptions?.year) || currentYear;
+    selectedYear = targetYear;
+    startDate = `${targetYear}-01-01`;
+    endDate = `${targetYear}-12-31`;
+    previousStartDate = `${targetYear - 1}-01-01`;
+    previousEndDate = `${targetYear - 1}-12-31`;
+    periodLabel = `Full Year ${targetYear}`;
+    previousPeriodLabel = `Full Year ${targetYear - 1}`;
+  } else if (preset === 'custom_range') {
+    const fallbackStart = formatYmd(currentYear, currentMonth, 1);
+    const fallbackEnd = formatYmd(
+      currentYear,
+      currentMonth,
+      getDaysInYearMonth(currentYear, currentMonth)
+    );
+    let rawStart = parseManilaDateOnly(filterOptions?.startDate) || fallbackStart;
+    let rawEnd = parseManilaDateOnly(filterOptions?.endDate) || fallbackEnd;
+    if (rawEnd < rawStart) {
+      const tmp = rawStart;
+      rawStart = rawEnd;
+      rawEnd = tmp;
+    }
+    startDate = rawStart;
+    endDate = rawEnd;
+
+    const startUtc = Date.parse(`${startDate}T00:00:00Z`);
+    const endUtc = Date.parse(`${endDate}T00:00:00Z`);
+    const spanDays = Math.max(1, Math.round((endUtc - startUtc) / 86400000) + 1);
+    const prevEndUtc = startUtc - 86400000;
+    const prevStartUtc = prevEndUtc - (spanDays - 1) * 86400000;
+
+    previousStartDate = new Date(prevStartUtc).toISOString().slice(0, 10);
+    previousEndDate = new Date(prevEndUtc).toISOString().slice(0, 10);
+    selectedYear = Number(startDate.slice(0, 4)) || currentYear;
+    selectedMonth = Number(startDate.slice(5, 7)) || currentMonth;
+    periodLabel = `${startDate} to ${endDate}`;
+    previousPeriodLabel = `${previousStartDate} to ${previousEndDate}`;
+  } else {
+    // Default: 'this_month'
+    const tmDays = getDaysInYearMonth(currentYear, currentMonth);
+    startDate = formatYmd(currentYear, currentMonth, 1);
+    endDate = formatYmd(currentYear, currentMonth, tmDays);
+
+    const prevYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+    const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+    const prevDays = getDaysInYearMonth(prevYear, prevMonth);
+    previousStartDate = formatYmd(prevYear, prevMonth, 1);
+    previousEndDate = formatYmd(prevYear, prevMonth, prevDays);
+
+    selectedYear = currentYear;
+    selectedMonth = currentMonth;
+    periodLabel = `${MONTH_NAMES_FULL[currentMonth - 1]} ${currentYear}`;
+    previousPeriodLabel = `${MONTH_NAMES_FULL[prevMonth - 1]} ${prevYear}`;
+  }
+
+  return {
+    preset: ['this_month', 'last_month', 'select_month', 'this_year', 'custom_range'].includes(preset)
+      ? preset
+      : 'this_month',
+    startDate,
+    endDate,
+    previousStartDate,
+    previousEndDate,
+    periodLabel,
+    previousPeriodLabel,
+    selectedYear,
+    selectedMonth,
+    timezone: 'Asia/Manila',
+  };
+}
+
+function classifyAnalyticsOrderStatus(order) {
+  const sqlSt = String(order?.sqlStatus || '').trim();
+  const statusStr = String(order?.status || '').toLowerCase();
+
+  if (sqlSt === 'Cancelled' || statusStr.includes('cancel')) {
+    return 'Cancelled';
+  }
+  if (isOrderCompleted(order)) {
+    return 'Completed';
+  }
+  if (
+    sqlSt === 'Ready' ||
+    statusStr.includes('dispatch') ||
+    statusStr.includes('transit') ||
+    statusStr.includes('shipped')
+  ) {
+    return 'Shipped';
+  }
+  if (
+    sqlSt === 'InProduction' ||
+    statusStr.includes('joinery') ||
+    statusStr.includes('finishing') ||
+    statusStr.includes('upholstery') ||
+    statusStr.includes('production') ||
+    statusStr.includes('processing')
+  ) {
+    return 'Processing';
+  }
+  return 'Pending';
+}
+
+function isOrderPaidOrDepositConfirmed(order) {
+  if (!order || classifyAnalyticsOrderStatus(order) === 'Cancelled') return false;
+  if (isOrderCompleted(order)) return true;
+  const deposit = Number(order?.depositPaid || 0);
+  if (deposit > 0) return true;
+  const paySt = String(order?.paymentStatus || '').toLowerCase();
+  if (paySt.includes('paid') && !paySt.includes('awaiting') && !paySt.includes('unpaid')) {
+    return true;
+  }
+  return false;
+}
+
+function getHistoricalOrderAmount(order) {
+  const explicitTotal = Number(order?.totalAmount);
+  if (Number.isFinite(explicitTotal) && explicitTotal > 0) {
+    return Math.round(explicitTotal);
+  }
+  const qty = Math.max(1, Number(order?.quantity || 1));
+  const unitPrice = Math.max(0, Number(order?.unitPrice || 0));
+  const extraCost = Math.max(0, Number(order?.extraCost || 0));
+  const discount = Math.max(0, Number(order?.voucherDiscountAmount || 0));
+  return Math.max(0, Math.round(unitPrice * qty + extraCost - discount));
+}
+
+function deduplicateOrdersList(orders = []) {
+  const seen = new Set();
+  const unique = [];
+  for (const ord of Array.isArray(orders) ? orders : []) {
+    if (!ord || typeof ord !== 'object') continue;
+    const key = String(ord.orderId || ord.orderNumber || ord.id || '').trim().toUpperCase();
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    unique.push(ord);
+  }
+  return unique;
+}
+
+export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}, nowMs = Date.now()) {
+  const range = resolveAnalyticsDateRange(filterOptions, nowMs);
+  const products = Array.isArray(storeData?.products) ? storeData.products : DEFAULT_STORE_DATA.products || [];
+  const categories = Array.isArray(storeData?.categories)
+    ? storeData.categories
+    : DEFAULT_STORE_DATA.categories || [];
+  const materials = Array.isArray(storeData?.materials)
+    ? storeData.materials
+    : DEFAULT_STORE_DATA.materials || [];
+  const rawOrders = Array.isArray(storeData?.orders) ? storeData.orders : DEFAULT_STORE_DATA.orders || [];
+  const orders = deduplicateOrdersList(rawOrders);
+  const vouchers = Array.isArray(storeData?.vouchers)
+    ? storeData.vouchers
+    : DEFAULT_STORE_DATA.vouchers || [];
+  const customers = Array.isArray(storeData?.customers)
+    ? storeData.customers
+    : DEFAULT_STORE_DATA.customers || [];
+  const inventoryTransactions = Array.isArray(storeData?.inventoryTransactions)
+    ? storeData.inventoryTransactions
+    : DEFAULT_STORE_DATA.inventoryTransactions || [];
+
+  const productById = new Map();
+  const productBySku = new Map();
+  products.forEach((p) => {
+    if (p?.id) productById.set(String(p.id), p);
+    if (p?.sku) productBySku.set(String(p.sku).toUpperCase(), p);
+    if (p?.productId) productBySku.set(String(p.productId).toUpperCase(), p);
+  });
+
+  const isWithinRange = (dateStr, startStr, endStr) => {
+    const d = parseManilaDateOnly(dateStr);
+    if (!d) return false;
+    return d >= startStr && d <= endStr;
+  };
+
+  // Helper to compute period KPI metrics for any [start, end] window
+  const computeWindowMetrics = (startStr, endStr) => {
+    const periodOrders = orders.filter((ord) => isWithinRange(ord.orderDate, startStr, endStr));
+    let totalRevenue = 0;
+    let grossBookedRevenue = 0;
+    let completedOrders = 0;
+    let pendingOrders = 0;
+    let processingOrders = 0;
+    let shippedOrders = 0;
+    let cancelledOrders = 0;
+    let totalProductsSold = 0;
+    let totalDiscountsGiven = 0;
+    let revenueEligibleOrderCount = 0;
+
+    const seenOrderItems = new Set();
+
+    periodOrders.forEach((ord) => {
+      const statusBucket = classifyAnalyticsOrderStatus(ord);
+      const historicalAmount = getHistoricalOrderAmount(ord);
+      const itemKey = String(ord.orderItemId || ord.orderId || ord.orderNumber || ord.id || '');
+
+      if (statusBucket === 'Completed') completedOrders += 1;
+      else if (statusBucket === 'Pending') pendingOrders += 1;
+      else if (statusBucket === 'Processing') processingOrders += 1;
+      else if (statusBucket === 'Shipped') shippedOrders += 1;
+      else if (statusBucket === 'Cancelled') cancelledOrders += 1;
+
+      if (statusBucket !== 'Cancelled') {
+        grossBookedRevenue += historicalAmount;
+        if (isOrderPaidOrDepositConfirmed(ord)) {
+          totalRevenue += historicalAmount;
+          revenueEligibleOrderCount += 1;
+        }
+        if (!itemKey || !seenOrderItems.has(itemKey)) {
+          if (itemKey) seenOrderItems.add(itemKey);
+          totalProductsSold += Math.max(1, Number(ord.quantity || 1));
+        }
+        totalDiscountsGiven += Math.max(0, Number(ord.voucherDiscountAmount || 0));
+      }
+    });
+
+    // New customers registered in [startStr, endStr]
+    const newCustomersInWindow = customers.filter((c) => {
+      const regDate = parseManilaDateOnly(c?.registeredAt || c?.createdAt);
+      return regDate && regDate >= startStr && regDate <= endStr;
+    });
+
+    const totalOrders = periodOrders.length;
+    const averageOrderValue =
+      revenueEligibleOrderCount > 0 ? Math.round(totalRevenue / revenueEligibleOrderCount) : 0;
+
+    return {
+      periodOrders,
+      totalRevenue: Math.round(totalRevenue),
+      grossBookedRevenue: Math.round(grossBookedRevenue),
+      totalOrders,
+      completedOrders,
+      pendingOrders,
+      processingOrders,
+      shippedOrders,
+      cancelledOrders,
+      totalProductsSold,
+      newCustomers: newCustomersInWindow.length,
+      newCustomersList: newCustomersInWindow,
+      totalDiscountsGiven: Math.round(totalDiscountsGiven),
+      averageOrderValue,
+      revenueEligibleOrderCount,
+    };
+  };
+
+  const currentMetrics = computeWindowMetrics(range.startDate, range.endDate);
+  const previousMetrics = computeWindowMetrics(range.previousStartDate, range.previousEndDate);
+
+  const formatPeso = (val) => `₱${Math.round(Number(val) || 0).toLocaleString('en-US')}`;
+
+  // 3. 9 Monthly Business Summary Cards
+  const summaryCards = [
+    {
+      key: 'totalRevenue',
+      label: 'Total Revenue',
+      value: currentMetrics.totalRevenue,
+      previousValue: previousMetrics.totalRevenue,
+      formattedValue: formatPeso(currentMetrics.totalRevenue),
+      formattedPreviousValue: formatPeso(previousMetrics.totalRevenue),
+      subtitle: `${currentMetrics.revenueEligibleOrderCount} paid/confirmed order(s)`,
+      comparison: computePercentageChange(currentMetrics.totalRevenue, previousMetrics.totalRevenue),
+    },
+    {
+      key: 'totalOrders',
+      label: 'Total Orders',
+      value: currentMetrics.totalOrders,
+      previousValue: previousMetrics.totalOrders,
+      formattedValue: String(currentMetrics.totalOrders),
+      formattedPreviousValue: String(previousMetrics.totalOrders),
+      subtitle: `Gross booked: ${formatPeso(currentMetrics.grossBookedRevenue)}`,
+      comparison: computePercentageChange(currentMetrics.totalOrders, previousMetrics.totalOrders),
+    },
+    {
+      key: 'completedOrders',
+      label: 'Completed Orders',
+      value: currentMetrics.completedOrders,
+      previousValue: previousMetrics.completedOrders,
+      formattedValue: String(currentMetrics.completedOrders),
+      formattedPreviousValue: String(previousMetrics.completedOrders),
+      subtitle: 'Delivered & settled in full',
+      comparison: computePercentageChange(
+        currentMetrics.completedOrders,
+        previousMetrics.completedOrders
+      ),
+    },
+    {
+      key: 'pendingOrders',
+      label: 'Pending Orders',
+      value: currentMetrics.pendingOrders,
+      previousValue: previousMetrics.pendingOrders,
+      formattedValue: String(currentMetrics.pendingOrders),
+      formattedPreviousValue: String(previousMetrics.pendingOrders),
+      subtitle: `${currentMetrics.processingOrders} in workshop · ${currentMetrics.shippedOrders} ready/shipped`,
+      comparison: computePercentageChange(currentMetrics.pendingOrders, previousMetrics.pendingOrders),
+    },
+    {
+      key: 'cancelledOrders',
+      label: 'Cancelled Orders',
+      value: currentMetrics.cancelledOrders,
+      previousValue: previousMetrics.cancelledOrders,
+      formattedValue: String(currentMetrics.cancelledOrders),
+      formattedPreviousValue: String(previousMetrics.cancelledOrders),
+      subtitle: 'Excluded from realized revenue',
+      comparison: computePercentageChange(
+        currentMetrics.cancelledOrders,
+        previousMetrics.cancelledOrders
+      ),
+    },
+    {
+      key: 'totalProductsSold',
+      label: 'Total Products Sold',
+      value: currentMetrics.totalProductsSold,
+      previousValue: previousMetrics.totalProductsSold,
+      formattedValue: `${currentMetrics.totalProductsSold} pcs`,
+      formattedPreviousValue: `${previousMetrics.totalProductsSold} pcs`,
+      subtitle: 'Handcrafted furniture units ordered',
+      comparison: computePercentageChange(
+        currentMetrics.totalProductsSold,
+        previousMetrics.totalProductsSold
+      ),
+    },
+    {
+      key: 'newCustomers',
+      label: 'New Customers',
+      value: currentMetrics.newCustomers,
+      previousValue: previousMetrics.newCustomers,
+      formattedValue: String(currentMetrics.newCustomers),
+      formattedPreviousValue: String(previousMetrics.newCustomers),
+      subtitle: `${customers.length} total registered clients`,
+      comparison: computePercentageChange(currentMetrics.newCustomers, previousMetrics.newCustomers),
+    },
+    {
+      key: 'totalDiscountsGiven',
+      label: 'Total Discounts Given',
+      value: currentMetrics.totalDiscountsGiven,
+      previousValue: previousMetrics.totalDiscountsGiven,
+      formattedValue: formatPeso(currentMetrics.totalDiscountsGiven),
+      formattedPreviousValue: formatPeso(previousMetrics.totalDiscountsGiven),
+      subtitle: 'Fixed-amount vouchers redeemed',
+      comparison: computePercentageChange(
+        currentMetrics.totalDiscountsGiven,
+        previousMetrics.totalDiscountsGiven
+      ),
+    },
+    {
+      key: 'averageOrderValue',
+      label: 'Average Order Value',
+      value: currentMetrics.averageOrderValue,
+      previousValue: previousMetrics.averageOrderValue,
+      formattedValue: formatPeso(currentMetrics.averageOrderValue),
+      formattedPreviousValue: formatPeso(previousMetrics.averageOrderValue),
+      subtitle: 'Realized revenue per paid order',
+      comparison: computePercentageChange(
+        currentMetrics.averageOrderValue,
+        previousMetrics.averageOrderValue
+      ),
+    },
+  ];
+
+  // 4. Sales and Revenue Analytics
+  // 4a. Daily revenue & orders per day throughout the selected month
+  const daysInTargetMonth = getDaysInYearMonth(range.selectedYear, range.selectedMonth);
+  const dailySeries = [];
+  for (let d = 1; d <= daysInTargetMonth; d += 1) {
+    const dateKey = formatYmd(range.selectedYear, range.selectedMonth, d);
+    const dayOrders = orders.filter((ord) => parseManilaDateOnly(ord.orderDate) === dateKey);
+    let dayRev = 0;
+    let dayUnits = 0;
+    let nonCancelledCount = 0;
+    dayOrders.forEach((ord) => {
+      const st = classifyAnalyticsOrderStatus(ord);
+      if (st !== 'Cancelled') {
+        nonCancelledCount += 1;
+        dayUnits += Math.max(1, Number(ord.quantity || 1));
+        if (isOrderPaidOrDepositConfirmed(ord)) {
+          dayRev += getHistoricalOrderAmount(ord);
+        }
+      }
+    });
+    dailySeries.push({
+      date: dateKey,
+      dayOfMonth: d,
+      shortLabel: `${MONTH_NAMES_SHORT[range.selectedMonth - 1]} ${d}`,
+      revenue: Math.round(dayRev),
+      orderCount: dayOrders.length,
+      nonCancelledOrderCount: nonCancelledCount,
+      unitsSold: dayUnits,
+    });
+  }
+
+  // 4b. Monthly revenue throughout the selected year + sales comparison between months
+  const monthlySeries = [];
+  for (let m = 1; m <= 12; m += 1) {
+    const mStart = formatYmd(range.selectedYear, m, 1);
+    const mEnd = formatYmd(range.selectedYear, m, getDaysInYearMonth(range.selectedYear, m));
+    const mWindow = computeWindowMetrics(mStart, mEnd);
+
+    const prevMonthRev = m > 1 ? monthlySeries[m - 2].revenue : 0;
+    const momChange = computePercentageChange(mWindow.totalRevenue, prevMonthRev);
+
+    monthlySeries.push({
+      monthIndex: m,
+      monthKey: `${range.selectedYear}-${pad2(m)}`,
+      monthName: MONTH_NAMES_FULL[m - 1],
+      shortName: MONTH_NAMES_SHORT[m - 1],
+      revenue: mWindow.totalRevenue,
+      grossBookedRevenue: mWindow.grossBookedRevenue,
+      orderCount: mWindow.totalOrders,
+      completedOrders: mWindow.completedOrders,
+      productsSold: mWindow.totalProductsSold,
+      monthOverMonthChange: momChange,
+      isSelectedMonth: m === range.selectedMonth,
+    });
+  }
+
+  // 4c. Revenue by Product Category
+  const categoryMap = new Map();
+  categories.forEach((cat) => {
+    categoryMap.set(String(cat.id).toLowerCase(), {
+      categoryId: String(cat.id).toLowerCase(),
+      categoryCode: cat.categoryId || cat.code || 'CAT-LR',
+      categoryName: cat.name,
+      revenue: 0,
+      unitsSold: 0,
+      orderCount: 0,
+    });
+  });
+
+  const normalizeCategorySlug = (order, matchedProduct) => {
+    if (matchedProduct?.categoryId) return String(matchedProduct.categoryId).toLowerCase();
+    const rawCat = String(order?.categoryName || '').toLowerCase();
+    if (rawCat.includes('living') || rawCat.includes('lounge')) return 'living';
+    if (rawCat.includes('dining')) return 'dining';
+    if (rawCat.includes('bed')) return 'bedroom';
+    if (rawCat.includes('study') || rawCat.includes('office') || rawCat.includes('credenza') || rawCat.includes('desk')) {
+      return 'office';
+    }
+    if (rawCat.includes('kitchen')) return 'kitchen';
+    return 'living';
+  };
+
+  currentMetrics.periodOrders.forEach((ord) => {
+    if (classifyAnalyticsOrderStatus(ord) === 'Cancelled') return;
+    const matchedProd =
+      productById.get(String(ord.furnitureId || '')) ||
+      productBySku.get(String(ord.sku || '').toUpperCase()) ||
+      null;
+    const slug = normalizeCategorySlug(ord, matchedProd);
+    if (!categoryMap.has(slug)) {
+      categoryMap.set(slug, {
+        categoryId: slug,
+        categoryCode: 'CAT-LR',
+        categoryName: ord.categoryName || 'Collection',
+        revenue: 0,
+        unitsSold: 0,
+        orderCount: 0,
+      });
+    }
+    const bucket = categoryMap.get(slug);
+    bucket.orderCount += 1;
+    bucket.unitsSold += Math.max(1, Number(ord.quantity || 1));
+    if (isOrderPaidOrDepositConfirmed(ord)) {
+      bucket.revenue += getHistoricalOrderAmount(ord);
+    }
+  });
+
+  const totalCatRev = Math.max(
+    1,
+    Array.from(categoryMap.values()).reduce((sum, c) => sum + c.revenue, 0)
+  );
+  const categoryRevenue = Array.from(categoryMap.values())
+    .map((c) => ({
+      ...c,
+      sharePercent:
+        currentMetrics.totalRevenue > 0 ? Math.round((c.revenue / totalCatRev) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => b.revenue - a.revenue || b.unitsSold - a.unitsSold);
+
+  const revComparison = computePercentageChange(
+    currentMetrics.totalRevenue,
+    previousMetrics.totalRevenue
+  );
+  const performanceStatus =
+    revComparison.percentChange > 0
+      ? 'Improving'
+      : revComparison.percentChange < 0
+      ? 'Declining'
+      : 'Stable';
+
+  const salesAnalytics = {
+    dailySeries,
+    monthlySeries,
+    categoryRevenue,
+    performanceTrend: {
+      status: performanceStatus,
+      comparison: revComparison,
+      currentRevenue: currentMetrics.totalRevenue,
+      previousRevenue: previousMetrics.totalRevenue,
+      summaryText:
+        performanceStatus === 'Improving'
+          ? `Realized revenue increased by ${revComparison.formatted} (${formatPeso(currentMetrics.totalRevenue)} vs ${formatPeso(previousMetrics.totalRevenue)} in ${range.previousPeriodLabel}).`
+          : performanceStatus === 'Declining'
+          ? `Realized revenue shifted by ${revComparison.formatted} (${formatPeso(currentMetrics.totalRevenue)} vs ${formatPeso(previousMetrics.totalRevenue)} in ${range.previousPeriodLabel}) while workshop orders remain in production.`
+          : `Realized revenue is steady at ${formatPeso(currentMetrics.totalRevenue)} compared to ${range.previousPeriodLabel}.`,
+    },
+  };
+
+  // 5. Best-Selling Products & Low-Sales Products
+  const productSalesMap = new Map();
+  products.forEach((prod) => {
+    const stockInfo = getProductStockStatus(prod);
+    productSalesMap.set(String(prod.id), {
+      id: String(prod.id),
+      productId: prod.productId || prod.sku || 'LR-ITEM',
+      sku: prod.sku || prod.productId || 'LR-ITEM',
+      name: prod.name,
+      categoryId: prod.categoryId,
+      categoryName: prod.categoryName || 'Showroom Collection',
+      image: prod.image || 'assets/images/category_living_lounge.jpg',
+      quantitySold: 0,
+      totalRevenue: 0,
+      orderCount: 0,
+      currentStock: stockInfo.availableStock,
+      minStockLevel: stockInfo.minStockLevel,
+      stockStatusKey: stockInfo.statusKey,
+      stockStatusLabel: stockInfo.label,
+    });
+  });
+
+  const seenProdOrderItems = new Set();
+  currentMetrics.periodOrders.forEach((ord) => {
+    if (classifyAnalyticsOrderStatus(ord) === 'Cancelled') return;
+    const itemKey = String(ord.orderItemId || ord.orderId || ord.orderNumber || ord.id || '');
+    if (itemKey && seenProdOrderItems.has(itemKey)) return;
+    if (itemKey) seenProdOrderItems.add(itemKey);
+
+    const matchedProd =
+      productById.get(String(ord.furnitureId || '')) ||
+      productBySku.get(String(ord.sku || '').toUpperCase()) ||
+      null;
+    const mapKey = matchedProd ? String(matchedProd.id) : String(ord.furnitureId || ord.sku || ord.id);
+    if (!productSalesMap.has(mapKey)) {
+      productSalesMap.set(mapKey, {
+        id: mapKey,
+        productId: ord.sku || 'LR-CUSTOM',
+        sku: ord.sku || 'LR-CUSTOM',
+        name: ord.furnitureName || 'Custom Piece',
+        categoryId: 'living',
+        categoryName: ord.categoryName || 'Bespoke Commission',
+        image: 'assets/images/category_living_lounge.jpg',
+        quantitySold: 0,
+        totalRevenue: 0,
+        orderCount: 0,
+        currentStock: 1,
+        minStockLevel: 1,
+        stockStatusKey: 'in_stock',
+        stockStatusLabel: 'In Stock',
+      });
+    }
+    const entry = productSalesMap.get(mapKey);
+    const qty = Math.max(1, Number(ord.quantity || 1));
+    entry.quantitySold += qty;
+    entry.orderCount += 1;
+    entry.totalRevenue += getHistoricalOrderAmount(ord);
+  });
+
+  const allProductRankings = Array.from(productSalesMap.values())
+    .sort((a, b) => b.quantitySold - a.quantitySold || b.totalRevenue - a.totalRevenue || a.name.localeCompare(b.name))
+    .map((item, idx) => ({
+      ...item,
+      rank: idx + 1,
+    }));
+
+  const topFiveProducts = allProductRankings.slice(0, 5);
+  const lowPerformingProducts = allProductRankings
+    .filter((item) => item.quantitySold <= 1)
+    .sort((a, b) => a.quantitySold - b.quantitySold || a.totalRevenue - b.totalRevenue)
+    .slice(0, 5);
+
+  const productAnalytics = {
+    allRankedProducts: allProductRankings,
+    topFiveProducts,
+    lowPerformingProducts,
+  };
+
+  // 6. Order Analytics (Status Distribution using actual system statuses)
+  const statusDefs = [
+    {
+      statusKey: 'Pending',
+      label: 'Pending',
+      sqlStatusLabel: 'Pending · Timber Selection',
+      color: '#D97706',
+    },
+    {
+      statusKey: 'Processing',
+      label: 'Processing',
+      sqlStatusLabel: 'InProduction · Workshop Joinery',
+      color: '#0095FF',
+    },
+    {
+      statusKey: 'Shipped',
+      label: 'Shipped',
+      sqlStatusLabel: 'Ready · Dispatched / Transit',
+      color: '#6366F1',
+    },
+    {
+      statusKey: 'Completed',
+      label: 'Completed',
+      sqlStatusLabel: 'Delivered · Completed',
+      color: '#059669',
+    },
+    {
+      statusKey: 'Cancelled',
+      label: 'Cancelled',
+      sqlStatusLabel: 'Cancelled',
+      color: '#DC2626',
+    },
+  ];
+
+  const statusCounts = {
+    Pending: { count: 0, totalAmount: 0 },
+    Processing: { count: 0, totalAmount: 0 },
+    Shipped: { count: 0, totalAmount: 0 },
+    Completed: { count: 0, totalAmount: 0 },
+    Cancelled: { count: 0, totalAmount: 0 },
+  };
+
+  currentMetrics.periodOrders.forEach((ord) => {
+    const bucketKey = classifyAnalyticsOrderStatus(ord);
+    if (statusCounts[bucketKey]) {
+      statusCounts[bucketKey].count += 1;
+      statusCounts[bucketKey].totalAmount += getHistoricalOrderAmount(ord);
+    }
+  });
+
+  const totalPeriodOrdersDenom = Math.max(1, currentMetrics.totalOrders);
+  const statusDistribution = statusDefs.map((def) => {
+    const data = statusCounts[def.statusKey] || { count: 0, totalAmount: 0 };
+    return {
+      ...def,
+      count: data.count,
+      totalAmount: Math.round(data.totalAmount),
+      sharePercent:
+        currentMetrics.totalOrders > 0
+          ? Math.round((data.count / totalPeriodOrdersDenom) * 1000) / 10
+          : 0,
+    };
+  });
+
+  const orderAnalytics = {
+    totalOrders: currentMetrics.totalOrders,
+    statusDistribution,
+  };
+
+  // 7. Customer Analytics
+  const customerOrderStats = new Map();
+  customers.forEach((c) => {
+    const email = String(c?.email || '').trim().toLowerCase();
+    if (!email) return;
+    customerOrderStats.set(email, {
+      customerId: c.customerId || c.id || 'LR-CUS-300',
+      name: c.fullName || c.name || 'Client',
+      email: c.email,
+      company: c.company || 'Private Residence',
+      registeredAt: parseManilaDateOnly(c.registeredAt || c.createdAt) || '2026-09-01',
+      periodOrders: 0,
+      periodSpent: 0,
+      lifetimeOrders: 0,
+      lifetimeSpent: 0,
+    });
+  });
+
+  orders.forEach((ord) => {
+    if (classifyAnalyticsOrderStatus(ord) === 'Cancelled') return;
+    const email = String(ord?.clientEmail || '').trim().toLowerCase();
+    if (!email) return;
+    if (!customerOrderStats.has(email)) {
+      customerOrderStats.set(email, {
+        customerId: generateOwnEntityId('customer', email).codeId,
+        name: ord.clientName || 'Showroom Client',
+        email: ord.clientEmail,
+        company: ord.clientCompany || 'Private Residence',
+        registeredAt: parseManilaDateOnly(ord.orderDate) || '2026-09-01',
+        periodOrders: 0,
+        periodSpent: 0,
+        lifetimeOrders: 0,
+        lifetimeSpent: 0,
+      });
+    }
+    const stat = customerOrderStats.get(email);
+    const amt = getHistoricalOrderAmount(ord);
+    stat.lifetimeOrders += 1;
+    stat.lifetimeSpent += amt;
+
+    if (isWithinRange(ord.orderDate, range.startDate, range.endDate)) {
+      stat.periodOrders += 1;
+      stat.periodSpent += amt;
+    }
+  });
+
+  const allCustomerStats = Array.from(customerOrderStats.values());
+  const orderingCustomers = allCustomerStats.filter((c) => c.periodOrders > 0);
+  const returningCustomers = allCustomerStats.filter(
+    (c) => c.periodOrders > 0 && c.lifetimeOrders > 1
+  );
+  const topCustomers = [...allCustomerStats]
+    .sort((a, b) => b.periodSpent - a.periodSpent || b.lifetimeSpent - a.lifetimeSpent)
+    .map((c, idx) => ({
+      ...c,
+      rank: idx + 1,
+      isReturning: c.lifetimeOrders > 1,
+    }));
+
+  const monthlyRegistrationTrend = [];
+  for (let m = 1; m <= 12; m += 1) {
+    const mStart = formatYmd(range.selectedYear, m, 1);
+    const mEnd = formatYmd(range.selectedYear, m, getDaysInYearMonth(range.selectedYear, m));
+    const regCount = allCustomerStats.filter(
+      (c) => c.registeredAt >= mStart && c.registeredAt <= mEnd
+    ).length;
+    const activeBuyerEmails = new Set(
+      orders
+        .filter(
+          (o) =>
+            classifyAnalyticsOrderStatus(o) !== 'Cancelled' &&
+            isWithinRange(o.orderDate, mStart, mEnd)
+        )
+        .map((o) => String(o.clientEmail || '').toLowerCase())
+    );
+    monthlyRegistrationTrend.push({
+      monthIndex: m,
+      monthName: MONTH_NAMES_FULL[m - 1],
+      shortName: MONTH_NAMES_SHORT[m - 1],
+      newRegistrations: regCount,
+      activeBuyers: activeBuyerEmails.size,
+    });
+  }
+
+  const customerAnalytics = {
+    newCustomersCount: currentMetrics.newCustomers,
+    newCustomersList: currentMetrics.newCustomersList,
+    orderingCustomersCount: orderingCustomers.length,
+    returningCustomersCount: returningCustomers.length,
+    totalRegisteredCustomers: allCustomerStats.length,
+    topCustomers,
+    monthlyRegistrationTrend,
+  };
+
+  // 8. Inventory Analytics (Live Snapshot vs Selected Period Historical Movements)
+  const productMetrics = computeInventoryMetrics(products);
+  const materialMetrics = computeMaterialInventoryMetrics(materials);
+  const currentProductCatalogValue = products.reduce((sum, p) => {
+    const stock = Math.max(0, Number(p.inStockCount ?? 0));
+    const price = Math.max(0, Number(p.effectivePrice ?? p.price ?? 0));
+    return sum + Math.round(stock * price);
+  }, 0);
+
+  const materialsRequiringRestock = [
+    ...materialMetrics.outOfStockItems,
+    ...materialMetrics.lowStockItems,
+  ];
+
+  const periodInvTransactions = inventoryTransactions.filter((tx) =>
+    isWithinRange(tx.dateTime || tx.date, range.startDate, range.endDate)
+  );
+
+  const consumedByMaterial = new Map();
+  periodInvTransactions
+    .filter((tx) => tx.transactionType === 'Stock Out')
+    .forEach((tx) => {
+      const mId = String(tx.materialId || tx.materialCode || tx.materialName || '');
+      const existing = consumedByMaterial.get(mId) || {
+        materialId: tx.materialId,
+        materialCode: tx.materialCode || 'MAT-01',
+        materialName: tx.materialName || 'Material',
+        materialType: tx.materialType || 'Solid Timber',
+        unit: tx.unit || 'units',
+        quantityConsumed: 0,
+        unitCost: Number(tx.unitCost || 0),
+        estimatedCost: 0,
+        transactionCount: 0,
+      };
+      const qty = Math.max(0, Number(tx.quantity || 0));
+      existing.quantityConsumed += qty;
+      existing.estimatedCost += Math.round(qty * existing.unitCost);
+      existing.transactionCount += 1;
+      consumedByMaterial.set(mId, existing);
+    });
+
+  // Also include order-level material consumption for orders placed in period that aren't already in Stock Out tx
+  currentMetrics.periodOrders.forEach((ord) => {
+    if (classifyAnalyticsOrderStatus(ord) === 'Cancelled') return;
+    const ordNum = String(ord.orderNumber || ord.orderId || '');
+    const alreadyLogged = periodInvTransactions.some(
+      (tx) => tx.transactionType === 'Stock Out' && String(tx.reason || '').includes(ordNum)
+    );
+    if (alreadyLogged) return;
+    const mId = String(ord.materialId || '');
+    if (!mId) return;
+    const matObj = materials.find((m) => m.id === mId) || null;
+    const qtyUsed = Math.max(0, Number(ord.materialQtyUsed || 0));
+    if (qtyUsed <= 0) return;
+    const existing = consumedByMaterial.get(mId) || {
+      materialId: mId,
+      materialCode: matObj?.materialId || matObj?.code || 'MAT-01',
+      materialName: ord.materialName || matObj?.name || 'Workshop Material',
+      materialType: matObj?.materialType || 'Solid Timber',
+      unit: ord.materialUnit || matObj?.unit || 'units',
+      quantityConsumed: 0,
+      unitCost: Number(matObj?.unitCost || 0),
+      estimatedCost: 0,
+      transactionCount: 0,
+    };
+    existing.quantityConsumed += qtyUsed;
+    existing.estimatedCost += Math.round(qtyUsed * existing.unitCost);
+    existing.transactionCount += 1;
+    consumedByMaterial.set(mId, existing);
+  });
+
+  const materialsConsumedInPeriod = Array.from(consumedByMaterial.values()).sort(
+    (a, b) => b.estimatedCost - a.estimatedCost || b.quantityConsumed - a.quantityConsumed
+  );
+
+  const totalMaterialUnitsConsumed = materialsConsumedInPeriod.reduce(
+    (sum, m) => sum + m.quantityConsumed,
+    0
+  );
+  const totalMaterialCostConsumed = materialsConsumedInPeriod.reduce(
+    (sum, m) => sum + m.estimatedCost,
+    0
+  );
+
+  const stockInTransactionsInPeriod = periodInvTransactions.filter(
+    (tx) => tx.transactionType === 'Stock In'
+  );
+  const totalMaterialUnitsRestocked = stockInTransactionsInPeriod.reduce(
+    (sum, tx) => sum + Math.max(0, Number(tx.quantity || 0)),
+    0
+  );
+  const totalRestockSpend = stockInTransactionsInPeriod.reduce(
+    (sum, tx) => sum + Math.max(0, Number(tx.purchaseCost || 0)),
+    0
+  );
+
+  const inventoryAnalytics = {
+    currentSnapshot: {
+      totalAvailableProducts: products.length,
+      totalProductUnitsInStock: productMetrics.totalStockAvailable,
+      lowStockProductsCount: productMetrics.lowStockCount,
+      lowStockProducts: productMetrics.lowStockItems,
+      outOfStockProductsCount: productMetrics.outOfStockCount,
+      outOfStockProducts: productMetrics.outOfStockItems,
+      totalMaterials: materials.length,
+      materialsRequiringRestockCount: materialsRequiringRestock.length,
+      materialsRequiringRestock,
+      currentMaterialInventoryValue: materialMetrics.totalInventoryValue,
+      currentProductCatalogValue,
+      currentInventoryValue: materialMetrics.totalInventoryValue + currentProductCatalogValue,
+    },
+    periodMovements: {
+      periodLabel: range.periodLabel,
+      materialsConsumedInPeriod,
+      totalMaterialUnitsConsumed,
+      totalMaterialCostConsumed,
+      stockInCount: stockInTransactionsInPeriod.length,
+      totalMaterialUnitsRestocked,
+      totalRestockSpend: Math.round(totalRestockSpend),
+      periodTransactions: periodInvTransactions,
+    },
+  };
+
+  // 9. Voucher Analytics
+  const normalizedVouchers = vouchers.map((v) => {
+    const statusInfo = computeVoucherStatusInfo(v, nowMs);
+    const issuedDate = parseManilaDateOnly(v.issuedAt || v.createdAt);
+    const expiryDate = parseManilaDateOnly(v.expiresAt || v.expiryDate);
+    return {
+      ...v,
+      voucherId: v.voucherId || generateOwnEntityId('voucher', v.code || v.id).codeId,
+      effectiveStatus: statusInfo.status,
+      badgeClass: statusInfo.badgeClass,
+      remainingLabel: statusInfo.remainingLabel,
+      issuedDisplay: formatVoucherIssuedDisplay(v),
+      expiryDisplay: formatVoucherExpiryDisplay(v),
+      issuedDate,
+      expiryDate,
+      inSelectedPeriod:
+        isWithinRange(issuedDate, range.startDate, range.endDate) ||
+        isWithinRange(v.redeemedAt, range.startDate, range.endDate) ||
+        isWithinRange(v.revokedAt, range.startDate, range.endDate),
+    };
+  });
+
+  // Vouchers issued in period (or all vouchers if preset is 'this_year' / or provide both period and total)
+  const vouchersInPeriod = normalizedVouchers.filter((v) =>
+    isWithinRange(v.issuedDate, range.startDate, range.endDate)
+  );
+  const targetVoucherPool = vouchersInPeriod.length > 0 ? normalizedVouchers : normalizedVouchers;
+
+  let activeVouchers = 0;
+  let expiringSoonVouchers = 0;
+  let redeemedVouchers = 0;
+  let expiredVouchers = 0;
+  let revokedVouchers = 0;
+  let totalDiscountIssued = 0;
+  let totalDiscountRedeemed = 0;
+
+  targetVoucherPool.forEach((v) => {
+    const amt = Math.max(0, Number(v.discountAmount ?? v.discountValue ?? 0));
+    totalDiscountIssued += amt;
+    if (v.effectiveStatus === 'Active') {
+      activeVouchers += 1;
+    } else if (v.effectiveStatus === 'Expiring Soon') {
+      activeVouchers += 1;
+      expiringSoonVouchers += 1;
+    } else if (v.effectiveStatus === 'Used') {
+      redeemedVouchers += 1;
+      totalDiscountRedeemed += amt;
+    } else if (v.effectiveStatus === 'Expired') {
+      expiredVouchers += 1;
+    } else if (v.effectiveStatus === 'Revoked' || v.effectiveStatus === 'Cancelled') {
+      revokedVouchers += 1;
+    }
+  });
+
+  // Also include order-level voucher discounts redeemed in period
+  const orderVoucherDiscountsInPeriod = currentMetrics.totalDiscountsGiven;
+  const effectiveDiscountRedeemed = Math.max(totalDiscountRedeemed, orderVoucherDiscountsInPeriod);
+  const totalVouchersIssued = targetVoucherPool.length;
+  const redemptionRate =
+    totalVouchersIssued > 0
+      ? Math.round((redeemedVouchers / totalVouchersIssued) * 1000) / 10
+      : 0;
+
+  const voucherAnalytics = {
+    totalVouchersIssued,
+    vouchersIssuedInSelectedPeriod: vouchersInPeriod.length,
+    activeVouchers,
+    expiringSoonVouchers,
+    redeemedVouchers,
+    expiredVouchers,
+    revokedVouchers,
+    totalDiscountIssued: Math.round(totalDiscountIssued),
+    totalDiscountRedeemed: Math.round(effectiveDiscountRedeemed),
+    redemptionRate,
+    vouchers: normalizedVouchers,
+  };
+
+  return {
+    businessName: 'Lillia and Rowena Furniture',
+    generatedAtIso: new Date(nowMs).toISOString(),
+    generatedAtManila: formatManilaDateTimeParts(new Date(nowMs).toISOString()).full,
+    dateRange: range,
+    summaryCards,
+    kpis: {
+      totalRevenue: currentMetrics.totalRevenue,
+      totalOrders: currentMetrics.totalOrders,
+      completedOrders: currentMetrics.completedOrders,
+      pendingOrders: currentMetrics.pendingOrders,
+      cancelledOrders: currentMetrics.cancelledOrders,
+      totalProductsSold: currentMetrics.totalProductsSold,
+      newCustomers: currentMetrics.newCustomers,
+      totalDiscountsGiven: currentMetrics.totalDiscountsGiven,
+      averageOrderValue: currentMetrics.averageOrderValue,
+    },
+    salesAnalytics,
+    productAnalytics,
+    orderAnalytics,
+    customerAnalytics,
+    inventoryAnalytics,
+    voucherAnalytics,
+    periodOrders: currentMetrics.periodOrders.map((ord) => ({
+      orderId: ord.orderId || ord.orderNumber,
+      orderNumber: ord.orderNumber || ord.orderId,
+      orderDate: ord.orderDate,
+      clientName: ord.clientName,
+      clientEmail: ord.clientEmail,
+      furnitureName: ord.furnitureName,
+      sku: ord.sku,
+      quantity: Math.max(1, Number(ord.quantity || 1)),
+      totalAmount: getHistoricalOrderAmount(ord),
+      depositPaid: Math.max(0, Number(ord.depositPaid || 0)),
+      voucherDiscountAmount: Math.max(0, Number(ord.voucherDiscountAmount || 0)),
+      appliedVoucherCode: ord.appliedVoucherCode || null,
+      statusBucket: classifyAnalyticsOrderStatus(ord),
+      stageLabel: ord.status,
+    })),
+  };
+}
+
+export function buildAnalyticsCsvContent(report) {
+  if (!report || typeof report !== 'object') return '';
+  const esc = (val) => {
+    const str = String(val ?? '').replace(/\r?\n/g, ' ');
+    if (str.includes(',') || str.includes('"')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const lines = [];
+  lines.push(['Business Name', esc(report.businessName || 'Lillia and Rowena Furniture')].join(','));
+  lines.push(['Report Period', esc(report.dateRange?.periodLabel || '')].join(','));
+  lines.push([
+    'Date Range',
+    esc(`${report.dateRange?.startDate || ''} to ${report.dateRange?.endDate || ''}`),
+  ].join(','));
+  lines.push(['Generated Date (PHT)', esc(report.generatedAtManila || '')].join(','));
+  lines.push('');
+
+  lines.push('MONTHLY BUSINESS SUMMARY KPIs');
+  lines.push(['Metric', 'Selected Period Value', 'Previous Period Value', 'Change (%)'].join(','));
+  (report.summaryCards || []).forEach((card) => {
+    lines.push(
+      [
+        esc(card.label),
+        esc(card.formattedValue),
+        esc(card.formattedPreviousValue),
+        esc(card.comparison?.formatted || '0.0%'),
+      ].join(',')
+    );
+  });
+  lines.push('');
+
+  lines.push('BEST-SELLING PRODUCTS');
+  lines.push(
+    ['Rank', 'Product ID', 'Product Name', 'Category', 'Quantity Sold', 'Total Revenue (PHP)', 'Stock Availability'].join(',')
+  );
+  (report.productAnalytics?.allRankedProducts || []).forEach((p) => {
+    lines.push(
+      [
+        esc(p.rank),
+        esc(p.productId),
+        esc(p.name),
+        esc(p.categoryName),
+        esc(p.quantitySold),
+        esc(`PHP ${p.totalRevenue}`),
+        esc(`${p.currentStock} (${p.stockStatusLabel})`),
+      ].join(',')
+    );
+  });
+  lines.push('');
+
+  lines.push('VOUCHER ANALYTICS SUMMARY');
+  lines.push(
+    [
+      'Total Issued',
+      'Active',
+      'Redeemed',
+      'Expired',
+      'Revoked',
+      'Total Discount Redeemed (PHP)',
+      'Redemption Rate (%)',
+    ].join(',')
+  );
+  const va = report.voucherAnalytics || {};
+  lines.push(
+    [
+      esc(va.totalVouchersIssued ?? 0),
+      esc(va.activeVouchers ?? 0),
+      esc(va.redeemedVouchers ?? 0),
+      esc(va.expiredVouchers ?? 0),
+      esc(va.revokedVouchers ?? 0),
+      esc(`PHP ${va.totalDiscountRedeemed ?? 0}`),
+      esc(`${va.redemptionRate ?? 0}%`),
+    ].join(',')
+  );
+  lines.push('');
+
+  lines.push('TRANSACTION DETAILS');
+  lines.push(
+    [
+      'Order ID',
+      'Order Date',
+      'Customer',
+      'Customer Email',
+      'Product',
+      'Product ID',
+      'Qty',
+      'Order Total (PHP)',
+      'Discount (PHP)',
+      'Status',
+    ].join(',')
+  );
+  (report.periodOrders || []).forEach((ord) => {
+    lines.push(
+      [
+        esc(ord.orderId),
+        esc(ord.orderDate),
+        esc(ord.clientName),
+        esc(ord.clientEmail),
+        esc(ord.furnitureName),
+        esc(ord.sku),
+        esc(ord.quantity),
+        esc(`PHP ${ord.totalAmount}`),
+        esc(`PHP ${ord.voucherDiscountAmount}`),
+        esc(ord.statusBucket),
+      ].join(',')
+    );
+  });
+
+  return lines.join('\r\n');
+}
+
+export function buildAnalyticsPdfBytes(report) {
+  const safeAscii = (str) =>
+    String(str ?? '')
+      .replace(/₱/g, 'PHP ')
+      .replace(/[—–]/g, '-')
+      .replace(/×/g, 'x')
+      .replace(/[^\x20-\x7E]/g, '')
+      .replace(/([()\\])/g, '\\$1');
+
+  const lines = [];
+  lines.push(`LILLIA AND ROWENA FURNITURE - MONTHLY ANALYTICS & BUSINESS REPORT`);
+  lines.push(`Reporting Period: ${report?.dateRange?.periodLabel || 'Current Period'} (${report?.dateRange?.startDate || ''} to ${report?.dateRange?.endDate || ''})`);
+  lines.push(`Generated On: ${report?.generatedAtManila || ''} (Asia/Manila)`);
+  lines.push(`--------------------------------------------------------------------------------`);
+  lines.push(`1. EXECUTIVE BUSINESS SUMMARY`);
+  (report?.summaryCards || []).forEach((card) => {
+    lines.push(
+      `   - ${card.label}: ${card.formattedValue} (Prior: ${card.formattedPreviousValue} | ${card.comparison?.formatted || '0.0%'})`
+    );
+  });
+  lines.push(`--------------------------------------------------------------------------------`);
+  lines.push(`2. TOP 5 BEST-SELLING PRODUCTS`);
+  (report?.productAnalytics?.topFiveProducts || []).forEach((p) => {
+    lines.push(
+      `   #${p.rank} [${p.productId}] ${p.name} (${p.categoryName}) - Sold: ${p.quantitySold} pcs | Revenue: PHP ${p.totalRevenue.toLocaleString('en-US')} | Stock: ${p.currentStock}`
+    );
+  });
+  lines.push(`--------------------------------------------------------------------------------`);
+  lines.push(`3. ORDER STATUS DISTRIBUTION`);
+  (report?.orderAnalytics?.statusDistribution || []).forEach((s) => {
+    lines.push(
+      `   - ${s.label}: ${s.count} order(s) (${s.sharePercent}%) - Total: PHP ${s.totalAmount.toLocaleString('en-US')}`
+    );
+  });
+  lines.push(`--------------------------------------------------------------------------------`);
+  const va = report?.voucherAnalytics || {};
+  lines.push(
+    `4. VOUCHER ANALYTICS: Issued: ${va.totalVouchersIssued || 0} | Active: ${va.activeVouchers || 0} | Redeemed: ${va.redeemedVouchers || 0} | Expired: ${va.expiredVouchers || 0} | Revoked: ${va.revokedVouchers || 0}`
+  );
+  lines.push(
+    `   Total Discount Redeemed: PHP ${(va.totalDiscountRedeemed || 0).toLocaleString('en-US')} | Redemption Rate: ${va.redemptionRate || 0}%`
+  );
+  lines.push(`--------------------------------------------------------------------------------`);
+  const inv = report?.inventoryAnalytics?.currentSnapshot || {};
+  const mov = report?.inventoryAnalytics?.periodMovements || {};
+  lines.push(
+    `5. INVENTORY ANALYTICS: Available Products: ${inv.totalAvailableProducts || 0} | Low Stock: ${inv.lowStockProductsCount || 0} | Needs Restock: ${inv.materialsRequiringRestockCount || 0}`
+  );
+  lines.push(
+    `   Current Combined Inventory Value: PHP ${(inv.currentInventoryValue || 0).toLocaleString('en-US')} | Period Material Consumed Cost: PHP ${(mov.totalMaterialCostConsumed || 0).toLocaleString('en-US')}`
+  );
+  lines.push(`--------------------------------------------------------------------------------`);
+  lines.push(`6. PERIOD TRANSACTIONS (${(report?.periodOrders || []).length} record(s))`);
+  (report?.periodOrders || []).slice(0, 12).forEach((ord) => {
+    lines.push(
+      `   ${ord.orderId} | ${ord.orderDate} | ${ord.clientName} | ${ord.sku} (x${ord.quantity}) | PHP ${ord.totalAmount.toLocaleString('en-US')} | ${ord.statusBucket}`
+    );
+  });
+
+  const textOps = ['BT', '/F1 9 Tf', '40 755 Td', '13 TL'];
+  lines.forEach((line, idx) => {
+    if (idx === 0) {
+      textOps.push(`(${safeAscii(line)}) Tj`);
+    } else {
+      textOps.push(`T* (${safeAscii(line)}) Tj`);
+    }
+  });
+  textOps.push('ET');
+  const streamBody = textOps.join('\n');
+
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
+    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+    `5 0 obj\n<< /Length ${streamBody.length} >>\nstream\n${streamBody}\nendstream\nendobj\n`,
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((obj) => {
+    offsets.push(pdf.length);
+    pdf += obj;
+  });
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i < offsets.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+
+  return new TextEncoder().encode(pdf);
+}
+
 
 
 

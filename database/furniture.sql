@@ -32,22 +32,22 @@ DROP TABLE IF EXISTS `Admin`;
 
 SET FOREIGN_KEY_CHECKS = 1;
 
--- ---------- 1. Independent tables ----------
+-- ---------- 1. Independent tables (Non-Incrementing Code IDs) ----------
 
 CREATE TABLE `Admin` (
-    `AdminID`       INT AUTO_INCREMENT PRIMARY KEY,
+    `AdminID`       VARCHAR(50) NOT NULL PRIMARY KEY,
     `Email`         VARCHAR(255) NOT NULL UNIQUE,
     `PasswordHash`  VARCHAR(255) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `Category` (
-    `CategoryID`    INT AUTO_INCREMENT PRIMARY KEY,
+    `CategoryID`    VARCHAR(50) NOT NULL PRIMARY KEY,
     `CategoryName`  VARCHAR(100) NOT NULL UNIQUE,
     `Description`   TEXT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `Customer` (
-    `CustomerID`    INT AUTO_INCREMENT PRIMARY KEY,
+    `CustomerID`    VARCHAR(50) NOT NULL PRIMARY KEY,
     `FullName`      VARCHAR(150) NOT NULL,
     `Email`         VARCHAR(255) NOT NULL UNIQUE,
     `PasswordHash`  VARCHAR(255) NOT NULL,
@@ -58,15 +58,15 @@ CREATE TABLE `Customer` (
 -- ---------- 2. Catalog & Workshop Inventory ----------
 
 CREATE TABLE `Product` (
-    `ProductID`    INT AUTO_INCREMENT PRIMARY KEY,
-    `CategoryID`   INT NOT NULL,
+    `ProductID`    VARCHAR(50) NOT NULL PRIMARY KEY,
+    `CategoryID`   VARCHAR(50) NOT NULL,
     `ProductName`  VARCHAR(150) NOT NULL,
     `BasePrice`    DECIMAL(10,2) NOT NULL CHECK (`BasePrice` >= 0),
     FOREIGN KEY (`CategoryID`) REFERENCES `Category`(`CategoryID`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `Material` (
-    `MaterialID`     INT AUTO_INCREMENT PRIMARY KEY,
+    `MaterialID`     VARCHAR(50) NOT NULL PRIMARY KEY,
     `MaterialName`   VARCHAR(150) NOT NULL,
     `MaterialType`   VARCHAR(100),
     `Unit`           VARCHAR(20) NOT NULL,
@@ -77,10 +77,10 @@ CREATE TABLE `Material` (
 -- ---------- 3. Voucher (issued by an admin to ONE customer for ONE product) ----------
 
 CREATE TABLE `Voucher` (
-    `VoucherID`      INT AUTO_INCREMENT PRIMARY KEY,
-    `CustomerID`     INT NOT NULL,
-    `ProductID`      INT NOT NULL,
-    `AdminID`        INT NOT NULL,
+    `VoucherID`      VARCHAR(50) NOT NULL PRIMARY KEY,
+    `CustomerID`     VARCHAR(50) NOT NULL,
+    `ProductID`      VARCHAR(50) NOT NULL,
+    `AdminID`        VARCHAR(50) NOT NULL,
     `Code`           VARCHAR(50) NOT NULL UNIQUE,
     `DiscountValue`  DECIMAL(10,2) NOT NULL CHECK (`DiscountValue` > 0),
     `ExpiryDate`     DATE DEFAULT NULL,
@@ -97,8 +97,8 @@ CREATE TABLE `Voucher` (
 -- ---------- 4. Orders, Items, Customizations, Payments & Tasks ----------
 
 CREATE TABLE `Customer_Order` (
-    `OrderID`     INT AUTO_INCREMENT PRIMARY KEY,
-    `CustomerID`  INT NOT NULL,
+    `OrderID`     VARCHAR(50) NOT NULL PRIMARY KEY,
+    `CustomerID`  VARCHAR(50) NOT NULL,
     `OrderDate`   DATE NOT NULL,
     `Status`      VARCHAR(20) NOT NULL DEFAULT 'Pending'
                   CHECK (`Status` IN ('Pending','InProduction','Ready','Delivered','Cancelled')),
@@ -106,10 +106,10 @@ CREATE TABLE `Customer_Order` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `Order_Item` (
-    `OrderItemID`  INT AUTO_INCREMENT PRIMARY KEY,
-    `OrderID`      INT NOT NULL,
-    `ProductID`    INT NOT NULL,
-    `VoucherID`    INT UNIQUE DEFAULT NULL,
+    `OrderItemID`  VARCHAR(50) NOT NULL PRIMARY KEY,
+    `OrderID`      VARCHAR(50) NOT NULL,
+    `ProductID`    VARCHAR(50) NOT NULL,
+    `VoucherID`    VARCHAR(50) UNIQUE DEFAULT NULL,
     `ItemType`     VARCHAR(20) NOT NULL DEFAULT 'Standard'
                    CHECK (`ItemType` IN ('Standard','Custom')),
     `Quantity`     INT NOT NULL DEFAULT 1 CHECK (`Quantity` > 0),
@@ -120,8 +120,8 @@ CREATE TABLE `Order_Item` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `Order_Item_Material` (
-    `OrderItemID`   INT NOT NULL,
-    `MaterialID`    INT NOT NULL,
+    `OrderItemID`   VARCHAR(50) NOT NULL,
+    `MaterialID`    VARCHAR(50) NOT NULL,
     `QuantityUsed`  DECIMAL(12,2) NOT NULL CHECK (`QuantityUsed` > 0),
     PRIMARY KEY (`OrderItemID`, `MaterialID`),
     FOREIGN KEY (`OrderItemID`) REFERENCES `Order_Item`(`OrderItemID`) ON DELETE CASCADE,
@@ -129,9 +129,9 @@ CREATE TABLE `Order_Item_Material` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `Customization` (
-    `CustomizationID`  INT AUTO_INCREMENT PRIMARY KEY,
-    `OrderItemID`      INT NOT NULL UNIQUE,
-    `MaterialID`       INT DEFAULT NULL,
+    `CustomizationID`  VARCHAR(50) NOT NULL PRIMARY KEY,
+    `OrderItemID`      VARCHAR(50) NOT NULL UNIQUE,
+    `MaterialID`       VARCHAR(50) DEFAULT NULL,
     `Length`           DECIMAL(8,2) DEFAULT NULL,
     `Width`            DECIMAL(8,2) DEFAULT NULL,
     `Height`           DECIMAL(8,2) DEFAULT NULL,
@@ -143,16 +143,16 @@ CREATE TABLE `Customization` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `Payment` (
-    `PaymentID`    INT AUTO_INCREMENT PRIMARY KEY,
-    `OrderID`      INT NOT NULL,
+    `PaymentID`    VARCHAR(50) NOT NULL PRIMARY KEY,
+    `OrderID`      VARCHAR(50) NOT NULL,
     `PaymentDate`  DATE NOT NULL,
     `Amount`       DECIMAL(10,2) NOT NULL CHECK (`Amount` > 0),
     FOREIGN KEY (`OrderID`) REFERENCES `Customer_Order`(`OrderID`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `Production_Task` (
-    `TaskID`       INT AUTO_INCREMENT PRIMARY KEY,
-    `OrderItemID`  INT NOT NULL,
+    `TaskID`       VARCHAR(50) NOT NULL PRIMARY KEY,
+    `OrderItemID`  VARCHAR(50) NOT NULL,
     `StartDate`    DATE DEFAULT NULL,
     `EndDate`      DATE DEFAULT NULL,
     `TaskStatus`   VARCHAR(20) NOT NULL DEFAULT 'Todo'
@@ -161,101 +161,101 @@ CREATE TABLE `Production_Task` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- =============================================================================
--- INITIAL SEED DATA (12 Tables)
+-- INITIAL SEED DATA (12 Tables — Non-Incrementing Code IDs like LR-LV-014)
 -- =============================================================================
 
 -- 1. Admin
 INSERT INTO `Admin` (`AdminID`, `Email`, `PasswordHash`) VALUES
-(1, 'admin@lilliarowena.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi');
+('ADM-LR-901', 'admin@lilliarowena.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi');
 
 -- 2. Category (5 Showroom Categories)
 INSERT INTO `Category` (`CategoryID`, `CategoryName`, `Description`) VALUES
-(1, 'Living Room', 'Low-slung architectural silhouettes upholstered in heavyweight Belgian linen and nubby wool bouclé, paired with kiln-dried white oak lounge frames and honed Italian travertine surfaces.'),
-(2, 'Dining Room', 'Heirloom dining tables milled from FAS-grade American black walnut and European white oak slabs, finished with hand-rubbed organic linseed oil and paired with Danish paper-cord chairs.'),
-(3, 'Bedroom', 'Quiet, grounding sleep architecture featuring Belgian flax linen headboards, solid ash timber platform rails, and cantilevered bedside tables with soft-close dovetail drawers.'),
-(4, 'Study/Work Desks', 'Commanding work desks and custom-milled fluted credenzas engineered with concealed cable channels, solid brass hardware, and book-matched walnut veneer interiors.'),
-(5, 'Kitchen', 'Architectural kitchen islands, honed Roman travertine prep surfaces, and sculpted solid oak counter stools crafted for open-plan culinary ateliers.');
+('CAT-LV-110', 'Living Room', 'Low-slung architectural silhouettes upholstered in heavyweight Belgian linen and nubby wool bouclé, paired with kiln-dried white oak lounge frames and honed Italian travertine surfaces.'),
+('CAT-DN-220', 'Dining Room', 'Heirloom dining tables milled from FAS-grade American black walnut and European white oak slabs, finished with hand-rubbed organic linseed oil and paired with Danish paper-cord chairs.'),
+('CAT-BD-330', 'Bedroom', 'Quiet, grounding sleep architecture featuring Belgian flax linen headboards, solid ash timber platform rails, and cantilevered bedside tables with soft-close dovetail drawers.'),
+('CAT-OF-440', 'Study/Work Desks', 'Commanding work desks and custom-milled fluted credenzas engineered with concealed cable channels, solid brass hardware, and book-matched walnut veneer interiors.'),
+('CAT-KT-550', 'Kitchen', 'Architectural kitchen islands, honed Roman travertine prep surfaces, and sculpted solid oak counter stools crafted for open-plan culinary ateliers.');
 
 -- 3. Customer
 INSERT INTO `Customer` (`CustomerID`, `FullName`, `Email`, `PasswordHash`, `PhoneNumber`, `Address`) VALUES
-(1, 'Rowena Vance', 'rowena.vance@vancearchitects.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+1 (212) 555-0148', 'Suite 400, 118 Mercer St, SoHo, New York, NY 10013'),
-(2, 'Julian Mercier', 'j.mercier@mercierstudio.co', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+1 (415) 555-0192', '742 Evergreen Terrace, Pacific Heights, SF'),
-(3, 'Elena Rostova', 'elena@rostovainteriors.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+44 20 7946 0821', '29A Kensington Park Rd, Notting Hill'),
-(4, 'Marcus Sterling', 'm.sterling@sterlingcapital.io', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+1 (312) 555-0164', '880 Lake Shore Drive, Apt 32B, Chicago');
+('LR-CUS-301', 'Rowena Vance', 'rowena.vance@vancearchitects.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+1 (212) 555-0148', 'Suite 400, 118 Mercer St, SoHo, New York, NY 10013'),
+('LR-CUS-302', 'Julian Mercier', 'j.mercier@mercierstudio.co', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+1 (415) 555-0192', '742 Evergreen Terrace, Pacific Heights, SF'),
+('LR-CUS-304', 'Elena Rostova', 'elena@rostovainteriors.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+44 20 7946 0821', '29A Kensington Park Rd, Notting Hill'),
+('LR-CUS-308', 'Marcus Sterling', 'm.sterling@sterlingcapital.io', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+1 (312) 555-0164', '880 Lake Shore Drive, Apt 32B, Chicago');
 
--- 4. Product (11 Showroom Pieces)
+-- 4. Product (11 Showroom Pieces — Explicit Product Code IDs like LR-LV-014)
 INSERT INTO `Product` (`ProductID`, `CategoryID`, `ProductName`, `BasePrice`) VALUES
-(1, 1, 'Rowena Curved Bouclé Lounge Sofa', 4850.00),
-(2, 2, 'Lillia Monolith Solid Walnut Dining Table', 4200.00),
-(3, 3, 'Serene Belgian Linen Platform Bed (King)', 3650.00),
-(4, 4, 'Quarter-Sawn Oak Architect Work Desk', 2150.00),
-(5, 4, 'Mercier Fluted Walnut Sideboard Credenza', 3890.00),
-(6, 1, 'Cavana Sculpted White Oak Lounge Chair', 1680.00),
-(7, 1, 'Verona Honed Travertine Plinth Table', 2350.00),
-(8, 2, 'Solenne Woven Cord Dining Chair (Set of 2)', 1290.00),
-(9, 3, 'Cantilevered Ash Bedside Nightstand (Pair)', 1180.00),
-(10, 5, 'Valen Travertine & Walnut Kitchen Island', 3850.00),
-(11, 5, 'Soren Sculpted Oak Counter Stools (Set of 2)', 1450.00);
+('LR-LV-014', 'CAT-LV-110', 'Rowena Curved Bouclé Lounge Sofa', 4850.00),
+('LR-DN-108', 'CAT-DN-220', 'Lillia Monolith Solid Walnut Dining Table', 4200.00),
+('LR-BD-204', 'CAT-BD-330', 'Serene Belgian Linen Platform Bed (King)', 3650.00),
+('LR-OF-315', 'CAT-OF-440', 'Quarter-Sawn Oak Architect Work Desk', 2150.00),
+('LR-OF-302', 'CAT-OF-440', 'Mercier Fluted Walnut Sideboard Credenza', 3890.00),
+('LR-LV-029', 'CAT-LV-110', 'Cavana Sculpted White Oak Lounge Chair', 1680.00),
+('LR-LV-042', 'CAT-LV-110', 'Verona Honed Travertine Plinth Table', 2350.00),
+('LR-DN-115', 'CAT-DN-220', 'Solenne Woven Cord Dining Chair (Set of 2)', 1290.00),
+('LR-BD-219', 'CAT-BD-330', 'Cantilevered Ash Bedside Nightstand (Pair)', 1180.00),
+('LR-KT-401', 'CAT-KT-550', 'Valen Travertine & Walnut Kitchen Island', 3850.00),
+('LR-KT-412', 'CAT-KT-550', 'Soren Sculpted Oak Counter Stools (Set of 2)', 1450.00);
 
--- 5. Material (8 Workshop Raw Materials)
+-- 5. Material (8 Workshop Raw Materials — Explicit Material Code IDs)
 INSERT INTO `Material` (`MaterialID`, `MaterialName`, `MaterialType`, `Unit`, `UnitCost`, `StockQuantity`) VALUES
-(1, 'FAS American Black Walnut Slabs', 'Solid Timber', 'bd ft', 28.00, 180.00),
-(2, 'Quarter-Sawn European White Oak', 'Solid Timber', 'bd ft', 22.00, 145.00),
-(3, 'Kiln-Dried European Ash Timber', 'Solid Timber', 'bd ft', 19.00, 28.00),
-(4, 'Heavyweight Belgian Wool Bouclé', 'Upholstery Textile', 'sq m', 68.00, 84.00),
-(5, 'Unbleached Belgian Flax Linen', 'Upholstery Textile', 'sq m', 54.00, 62.00),
-(6, 'Honed Roman Travertine Blocks', 'Architectural Stone', 'slabs', 420.00, 6.00),
-(7, 'Solid Aged Brass Hardware & Butterfly Keys', 'Hardware & Joinery', 'sets', 95.00, 32.00),
-(8, 'Danish Waxed Paper Cord & Cold-Pressed Linseed Oil', 'Cord & Finishes', 'rolls', 42.00, 24.00);
+('MAT-WAL-01', 'FAS American Black Walnut Slabs', 'Solid Timber', 'bd ft', 28.00, 180.00),
+('MAT-OAK-02', 'Quarter-Sawn European White Oak', 'Solid Timber', 'bd ft', 22.00, 145.00),
+('MAT-ASH-03', 'Kiln-Dried European Ash Timber', 'Solid Timber', 'bd ft', 19.00, 28.00),
+('MAT-BCL-04', 'Heavyweight Belgian Wool Bouclé', 'Upholstery Textile', 'sq m', 68.00, 84.00),
+('MAT-LIN-05', 'Unbleached Belgian Flax Linen', 'Upholstery Textile', 'sq m', 54.00, 62.00),
+('MAT-TRV-06', 'Honed Roman Travertine Blocks', 'Architectural Stone', 'slabs', 420.00, 6.00),
+('MAT-BRS-07', 'Solid Aged Brass Hardware & Butterfly Keys', 'Hardware & Joinery', 'sets', 95.00, 32.00),
+('MAT-CRD-08', 'Danish Waxed Paper Cord & Cold-Pressed Linseed Oil', 'Cord & Finishes', 'rolls', 42.00, 24.00);
 
--- 6. Voucher (Single-Customer, Single-Product Vouchers)
+-- 6. Voucher (Single-Customer, Single-Product Vouchers — Explicit Voucher Code IDs)
 INSERT INTO `Voucher` (`VoucherID`, `CustomerID`, `ProductID`, `AdminID`, `Code`, `DiscountValue`, `ExpiryDate`, `Status`) VALUES
-(1, 1, 1, 1, 'VCH-ROWENA-SOFA400', 400.00, '2026-12-31', 'Active'),
-(2, 1, 2, 1, 'VCH-ROWENA-WALNUT350', 350.00, '2026-12-31', 'Active'),
-(3, 2, 3, 1, 'VCH-JULIAN-BED250', 250.00, '2026-12-15', 'Active');
+('VCH-LR-740', 'LR-CUS-301', 'LR-LV-014', 'ADM-LR-901', 'VCH-ROWENA-SOFA400', 400.00, '2026-12-31', 'Active'),
+('VCH-LR-735', 'LR-CUS-301', 'LR-DN-108', 'ADM-LR-901', 'VCH-ROWENA-WALNUT350', 350.00, '2026-12-31', 'Active'),
+('VCH-LR-725', 'LR-CUS-302', 'LR-BD-204', 'ADM-LR-901', 'VCH-JULIAN-BED250', 250.00, '2026-12-15', 'Active');
 
--- 7. Customer_Order
+-- 7. Customer_Order (Explicit Order Code IDs)
 INSERT INTO `Customer_Order` (`OrderID`, `CustomerID`, `OrderDate`, `Status`) VALUES
-(1, 1, '2026-10-18', 'InProduction'),
-(2, 1, '2026-10-04', 'Ready'),
-(3, 2, '2026-10-11', 'InProduction'),
-(4, 3, '2026-09-26', 'Delivered'),
-(5, 4, '2026-11-08', 'Pending');
+('ORD-2026-8841', 'LR-CUS-301', '2026-10-18', 'InProduction'),
+('ORD-2026-8834', 'LR-CUS-301', '2026-10-04', 'Ready'),
+('ORD-2026-8829', 'LR-CUS-302', '2026-10-11', 'InProduction'),
+('ORD-2026-8815', 'LR-CUS-304', '2026-09-26', 'Delivered'),
+('ORD-2026-8850', 'LR-CUS-308', '2026-11-08', 'Pending');
 
--- 8. Order_Item
+-- 8. Order_Item (Explicit OrderItem Code IDs)
 INSERT INTO `Order_Item` (`OrderItemID`, `OrderID`, `ProductID`, `VoucherID`, `ItemType`, `Quantity`, `UnitPrice`) VALUES
-(1, 1, 2, NULL, 'Custom', 1, 3696.00),
-(2, 2, 1, NULL, 'Standard', 1, 4365.00),
-(3, 3, 5, NULL, 'Standard', 2, 3307.00),
-(4, 4, 3, NULL, 'Standard', 1, 3650.00),
-(5, 5, 6, NULL, 'Standard', 2, 1840.00);
+('ITM-2026-5841', 'ORD-2026-8841', 'LR-DN-108', NULL, 'Custom', 1, 3696.00),
+('ITM-2026-5834', 'ORD-2026-8834', 'LR-LV-014', NULL, 'Standard', 1, 4365.00),
+('ITM-2026-5829', 'ORD-2026-8829', 'LR-OF-302', NULL, 'Standard', 2, 3307.00),
+('ITM-2026-5815', 'ORD-2026-8815', 'LR-BD-204', NULL, 'Standard', 1, 3650.00),
+('ITM-2026-5850', 'ORD-2026-8850', 'LR-LV-029', NULL, 'Standard', 2, 1840.00);
 
 -- 9. Order_Item_Material
 INSERT INTO `Order_Item_Material` (`OrderItemID`, `MaterialID`, `QuantityUsed`) VALUES
-(1, 1, 48.00),
-(2, 4, 14.00),
-(3, 1, 64.00),
-(4, 5, 16.00),
-(5, 2, 24.00);
+('ITM-2026-5841', 'MAT-WAL-01', 48.00),
+('ITM-2026-5834', 'MAT-BCL-04', 14.00),
+('ITM-2026-5829', 'MAT-WAL-01', 64.00),
+('ITM-2026-5815', 'MAT-LIN-05', 16.00),
+('ITM-2026-5850', 'MAT-OAK-02', 24.00);
 
--- 10. Customization
+-- 10. Customization (Explicit Customization Code ID)
 INSERT INTO `Customization` (`CustomizationID`, `OrderItemID`, `MaterialID`, `Length`, `Width`, `Height`, `ColorFinish`, `Notes`, `ExtraCost`) VALUES
-(1, 1, 1, 260.00, 110.00, 75.00, 'Hand-Rubbed Natural Walnut', 'Book-matched walnut slab approved by client via slab photography.', 0.00);
+('CSM-2026-6841', 'ITM-2026-5841', 'MAT-WAL-01', 260.00, 110.00, 75.00, 'Hand-Rubbed Natural Walnut', 'Book-matched walnut slab approved by client via slab photography.', 0.00);
 
--- 11. Payment
+-- 11. Payment (Explicit Payment Code IDs)
 INSERT INTO `Payment` (`PaymentID`, `OrderID`, `PaymentDate`, `Amount`) VALUES
-(1, 1, '2026-10-18', 1848.00),
-(2, 2, '2026-10-04', 4365.00),
-(3, 3, '2026-10-11', 3307.00),
-(4, 4, '2026-09-26', 3650.00);
+('PAY-2026-9841', 'ORD-2026-8841', '2026-10-18', 1848.00),
+('PAY-2026-9834', 'ORD-2026-8834', '2026-10-04', 4365.00),
+('PAY-2026-9829', 'ORD-2026-8829', '2026-10-11', 3307.00),
+('PAY-2026-9815', 'ORD-2026-8815', '2026-09-26', 3650.00);
 
--- 12. Production_Task
+-- 12. Production_Task (Explicit Task Code IDs)
 INSERT INTO `Production_Task` (`TaskID`, `OrderItemID`, `StartDate`, `EndDate`, `TaskStatus`) VALUES
-(1, 1, '2026-10-18', NULL, 'InProgress'),
-(2, 2, '2026-10-04', '2026-11-12', 'Done'),
-(3, 3, '2026-10-11', NULL, 'InProgress'),
-(4, 4, '2026-09-26', '2026-11-08', 'Done'),
-(5, 5, '2026-11-08', NULL, 'Todo');
+('TSK-2026-2841', 'ITM-2026-5841', '2026-10-18', NULL, 'InProgress'),
+('TSK-2026-2834', 'ITM-2026-5834', '2026-10-04', '2026-11-12', 'Done'),
+('TSK-2026-2829', 'ITM-2026-5829', '2026-10-11', NULL, 'InProgress'),
+('TSK-2026-2815', 'ITM-2026-5815', '2026-09-26', '2026-11-08', 'Done'),
+('TSK-2026-2850', 'ITM-2026-5850', '2026-11-08', NULL, 'Todo');
 
 -- =============================================================================
 -- STORED PROCEDURES & TRIGGERS
@@ -264,19 +264,19 @@ INSERT INTO `Production_Task` (`TaskID`, `OrderItemID`, `StartDate`, `EndDate`, 
 DELIMITER $$
 
 CREATE PROCEDURE `check_voucher_use`(
-    IN p_voucher_id   INT,
-    IN p_order_id     INT,
+    IN p_voucher_id   VARCHAR(50),
+    IN p_order_id     VARCHAR(50),
     IN p_check_status BOOLEAN
 )
 BEGIN
-    DECLARE v_customer   INT;
-    DECLARE v_product    INT;
+    DECLARE v_customer   VARCHAR(50);
+    DECLARE v_product    VARCHAR(50);
     DECLARE v_discount   DECIMAL(10,2);
     DECLARE v_status     VARCHAR(20);
     DECLARE v_expiry     DATE;
     DECLARE v_expires_at DATETIME;
     DECLARE p_base_price DECIMAL(10,2);
-    DECLARE o_customer   INT;
+    DECLARE o_customer   VARCHAR(50);
 
     IF p_voucher_id IS NOT NULL THEN
         SELECT CustomerID, ProductID, DiscountValue, Status, ExpiryDate, ExpiresAt
@@ -328,8 +328,8 @@ BEGIN
 END$$
 
 CREATE PROCEDURE `sp_record_stock_movement`(
-    IN p_material_id   INT,
-    IN p_admin_id      INT,
+    IN p_material_id   VARCHAR(50),
+    IN p_admin_id      VARCHAR(50),
     IN p_movement_type VARCHAR(20),
     IN p_quantity      DECIMAL(12,2),
     IN p_unit_cost     DECIMAL(10,2),
@@ -377,4 +377,3 @@ BEGIN
 END$$
 
 DELIMITER ;
-

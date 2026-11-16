@@ -4,6 +4,8 @@ import {
   PRODUCT_TYPES,
   applyAdminOrderUpdate,
   applyMaterialStockMovement,
+  buildAnalyticsCsvContent,
+  buildAnalyticsPdfBytes,
   buildMaterialRecord,
   buildProductRecord,
   buildRequestDesignMessengerUrl,
@@ -12,6 +14,7 @@ import {
   computeCustomerDirectory,
   computeInventoryMetrics,
   computeMaterialInventoryMetrics,
+  computeMonthlyAnalyticsReport,
   computeVariantPricing,
   computeVoucherStatusInfo,
   createCustomOrderRequest,
@@ -23,20 +26,29 @@ import {
   findMatchingColorVariant,
   formatCustomerProductDisplay,
   formatRemainingTime,
+  formatSimplifiedProductCardData,
   formatVoucherBenefitLabel,
   formatVoucherExpiryDisplay,
   formatVoucherIssuedDisplay,
+  generateOwnEntityId,
   getColorFilterCounts,
+  getCompletedTransactionsForCustomer,
   getManilaDateInputDefaults,
   getMaterialCategories,
   getMaterialStockStatus,
   getProductStockStatus,
   getRecommendedBestSellers,
+  isOrderCompleted,
   paginateItems,
+  partitionOrdersByCompletion,
   recordCustomerOrderPayment,
   removeMaterialFromInventory,
   removeProductFromCatalog,
+  requestOrderCancellation,
+  resolveAnalyticsDateRange,
   resolveAuthNavigationState,
+  resolveCustomerAvatarState,
+  resolveOrderCancellationRequest,
   revokeVoucherInList,
   validateAndBuildOfferProposal,
   validateAndCreateVoucher,
@@ -53,7 +65,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Furnish every room with sustainably sourced American walnut, solid white oak, and soft Belgian linen and bouclé upholstery—ready for your home or custom-made to order.',
     priceLabel: 'Pieces Starting At',
-    price: '$1,180',
+    price: '₱1,180',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Explore Living Room',
     filterTarget: 'living',
@@ -67,7 +79,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Relax in deep-seated sofas upholstered in soft Belgian bouclé, paired with solid white oak lounge frames and natural stone coffee tables built for everyday living.',
     priceLabel: 'Living Room Starting At',
-    price: '$1,680',
+    price: '₱1,680',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Shop Living & Lounge',
     filterTarget: 'living',
@@ -81,7 +93,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Gather around heirloom dining tables crafted from solid American black walnut and white oak, paired with comfortable woven cord and upholstered dining chairs.',
     priceLabel: 'Dining Room Starting At',
-    price: '$1,290',
+    price: '₱1,290',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Shop Dining & Tables',
     filterTarget: 'dining',
@@ -95,7 +107,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Create a calm bedroom retreat with upholstered Belgian linen platform beds, solid ash frames, and soft-close bedside tables with spacious storage.',
     priceLabel: 'Bedroom Starting At',
-    price: '$1,180',
+    price: '₱1,180',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Shop Bedroom Collection',
     filterTarget: 'bedroom',
@@ -109,7 +121,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Organize your workspace and living areas with solid walnut writing desks, concealed cable management, and handcrafted fluted wood sideboards.',
     priceLabel: 'Study & Storage Starting At',
-    price: '$2,150',
+    price: '₱2,150',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Shop Study & Storage',
     filterTarget: 'office',
@@ -136,6 +148,7 @@ const state = {
   vouchers: [],
   orders: [],
   selectedColorByProduct: {},
+  selectedMaterialByProduct: {},
   selectedCategory: 'recommended',
   searchQuery: '',
   sortBy: 'featured',
@@ -190,6 +203,11 @@ const state = {
   adminOrderSearch: '',
   adminOrderStage: 'all',
   adminCustomerSearch: '',
+  adminAnalyticsPreset: 'this_month',
+  adminAnalyticsMonth: '',
+  adminAnalyticsYear: '',
+  adminAnalyticsStartDate: '',
+  adminAnalyticsEndDate: '',
   customerProfile: {
     name: 'Rowena Vance',
     email: 'rowena.vance@vancearchitects.com',
@@ -197,8 +215,47 @@ const state = {
     city: 'New York, NY 10013',
     address: 'Suite 400, 118 Mercer St, SoHo',
     notes: 'Freight elevator available Mon–Fri 9:00 AM – 5:00 PM. Please call 30 minutes before arrival.',
+    avatar: '',
   },
 };
+
+function syncCustomerAvatarDOM(profile = state.customerProfile) {
+  const avatarState = resolveCustomerAvatarState({
+    name: profile?.name || state.sessionUser?.name || 'Rowena Vance',
+    avatar: profile?.avatar || state.sessionUser?.avatar || '',
+  });
+
+  const pairs = [
+    ['client-sidebar-avatar-img', 'client-sidebar-initials'],
+    ['client-welcome-avatar-img', 'client-welcome-avatar-initials'],
+    ['client-profile-avatar-preview', 'client-profile-avatar-initials'],
+    ['portal-header-avatar-img', 'portal-header-default-icon'],
+    ['nav-profile-avatar-img', 'nav-profile-default-icon'],
+  ];
+
+  pairs.forEach(([imgId, fallbackId]) => {
+    const imgEl = document.getElementById(imgId);
+    const fallbackEl = document.getElementById(fallbackId);
+    if (fallbackEl && fallbackEl.tagName !== 'svg' && fallbackEl.tagName !== 'SVG') {
+      fallbackEl.textContent = avatarState.initials;
+    }
+    if (!imgEl) return;
+    if (avatarState.hasAvatar) {
+      imgEl.src = avatarState.avatarSrc;
+      imgEl.classList.remove('hidden');
+      if (fallbackEl) fallbackEl.classList.add('hidden');
+    } else {
+      imgEl.removeAttribute('src');
+      imgEl.classList.add('hidden');
+      if (fallbackEl) fallbackEl.classList.remove('hidden');
+    }
+  });
+
+  const hiddenInput = document.getElementById('client-input-avatar');
+  if (hiddenInput) {
+    hiddenInput.value = avatarState.hasAvatar ? avatarState.avatarSrc : '';
+  }
+}
 
 function esc(value) {
   return String(value ?? '')
@@ -209,7 +266,7 @@ function esc(value) {
 }
 
 function usd(amount) {
-  return '$' + Math.round(Number(amount || 0)).toLocaleString('en-US');
+  return '₱' + Math.round(Number(amount || 0)).toLocaleString('en-US');
 }
 
 function bindLiveSearchInput(inputId, stateKey, onRender) {
@@ -229,7 +286,8 @@ function bindLiveSearchInput(inputId, stateKey, onRender) {
 
 function bindStorefrontProductButtons(root = document) {
   root.querySelectorAll('[data-view-product]').forEach((btn) => {
-    btn.onclick = () => {
+    btn.onclick = (e) => {
+      e.preventDefault();
       const pid = btn.getAttribute('data-view-product');
       if (pid) openProductDetailModal(pid);
     };
@@ -417,6 +475,7 @@ function syncAuthNavigationUI() {
     profilePillEl.title = `My Account (${authNav.userDisplayName})`;
     profilePillEl.setAttribute('aria-label', `My Account (${authNav.userDisplayName})`);
   }
+  syncCustomerAvatarDOM(state.customerProfile);
 
   if (guestFooter) guestFooter.classList.toggle('hidden', authNav.isAuthenticated);
   if (custFooter) custFooter.classList.toggle('hidden', !authNav.showCustomerAccountNav);
@@ -824,6 +883,14 @@ function openProductDetailModal(productId) {
     product.defaultFinish;
   const display = formatCustomerProductDisplay(product, selectedFinish);
 
+  const availableMaterials = Array.isArray(state.materials) ? state.materials : [];
+  const defaultMatId = product.primaryMaterialId || availableMaterials[0]?.id || '';
+  const selectedMatId = state.selectedMaterialByProduct[product.id] || defaultMatId;
+  const selectedMaterialObj =
+    availableMaterials.find((m) => m.id === selectedMatId) ||
+    availableMaterials.find((m) => m.id === defaultMatId) ||
+    null;
+
   if (catHeader) {
     catHeader.textContent = display.categoryName;
   }
@@ -836,87 +903,135 @@ function openProductDetailModal(productId) {
 
   body.innerHTML = `
     <div class="grid grid-cols-1 md:grid-cols-12 gap-6 sm:gap-8 items-start">
-    <div class="md:col-span-6 space-y-3">
-    <div class="aspect-[4/3] rounded-2xl overflow-hidden bg-slate-100 border border-slate-200">
-    <img src="${esc(display.image)}" alt="${esc(display.name)}" class="w-full h-full object-cover" />
-    </div>
-    <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 px-1">
-    <span>Dimensions: <strong class="text-[#0D1015]">${esc(display.dimensions)}</strong></span>
-    <span>Delivery: <strong class="text-[#0D1015]">Ships in ${display.leadTimeWeeks} ${display.leadTimeWeeks === 1 ? 'week' : 'weeks'}</strong></span>
-    </div>
-    </div>
-
-    <div class="md:col-span-6 space-y-5">
-    <div class="space-y-2">
-    <div class="flex flex-wrap items-center gap-2">
-    <span class="px-2.5 py-1 rounded-full text-xs font-semibold border ${statusBadgeClass}">
-              ${esc(display.availabilityLabel)}
-    </span>
-    <span class="text-xs text-slate-500">${esc(display.availabilityDetail)}</span>
-    </div>
-
-    <h2 id="product-modal-title" class="font-serif-display text-2xl sm:text-3xl font-bold text-[#0D1015] leading-snug">
-            ${esc(display.name)}
-    </h2>
-
-    <div class="flex items-baseline gap-2.5 pt-1">
-    <span class="font-mono-tech text-2xl sm:text-3xl font-bold text-[#0095FF]">
-              ${usd(display.effectivePrice)}
-    </span>
-            ${
-              display.hasDiscount
-                ? `<span class="font-mono-tech text-sm text-slate-400 line-through">${usd(display.variantBasePrice)}</span>
-    <span class="text-xs font-semibold text-emerald-700">Save ${display.discountPercent}%</span>`
-                : ''
-            }
-    </div>
-    </div>
-
-    <p class="text-sm text-slate-600 leading-relaxed">
-          ${esc(display.description)}
-    </p>
-
+      <div class="md:col-span-6 space-y-3">
+        <div class="aspect-[4/3] rounded-2xl overflow-hidden bg-slate-100 border border-slate-200">
+          <img src="${esc(display.image)}" alt="${esc(display.name)}" class="w-full h-full object-cover" />
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 px-1">
+          <span>Dimensions: <strong class="text-[#0D1015]">${esc(display.dimensions)}</strong></span>
+          <span>Shipping: <strong class="text-[#0D1015]">Ships in ${display.leadTimeWeeks} ${display.leadTimeWeeks === 1 ? 'week' : 'weeks'}</strong></span>
+        </div>
         ${
           display.craftsmanshipNote
             ? `<div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 leading-relaxed">
-    <strong class="text-[#0D1015]">Materials &amp; Care:</strong> ${esc(display.craftsmanshipNote)}
-    </div>`
+                <strong class="text-[#0D1015]">Craftsmanship &amp; Care:</strong> ${esc(display.craftsmanshipNote)}
+              </div>`
             : ''
         }
+      </div>
 
-    <div class="space-y-2">
-    <div class="flex items-center justify-between text-xs">
-    <span class="font-semibold text-[#0D1015]">Selected Finish: <span class="text-[#0077CC]">${esc(display.selectedFinish)}</span></span>
-    <span class="text-slate-500">
+      <div class="md:col-span-6 space-y-3.5">
+        <div class="space-y-1.5">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="px-2.5 py-1 rounded-full text-xs font-semibold border ${statusBadgeClass}">
+              ${esc(display.availabilityLabel)}
+            </span>
+            <span class="text-xs text-slate-500">${esc(display.availabilityDetail)}</span>
+          </div>
+
+          <h2 id="product-modal-title" class="font-serif-display text-2xl sm:text-3xl font-bold text-[#0D1015] leading-snug">
+            ${esc(display.name)}
+          </h2>
+
+          <div class="flex items-baseline gap-2.5 pt-0.5">
+            <span class="font-mono-tech text-2xl sm:text-3xl font-bold text-[#0095FF]">
+              ${usd(display.effectivePrice)}
+            </span>
+            ${
+              display.hasDiscount
+                ? `<span class="font-mono-tech text-sm text-slate-400 line-through">${usd(display.variantBasePrice)}</span>
+                   <span class="text-xs font-semibold text-emerald-700">Save ${display.discountPercent}%</span>`
+                : ''
+            }
+          </div>
+        </div>
+
+        <p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
+          ${esc(display.description)}
+        </p>
+
+        <!-- Finish & Color Selection (Product Details Customization) -->
+        <div class="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-semibold text-[#0D1015]">Finish &amp; Color: <span class="text-[#0077CC]">${esc(display.selectedFinish)}</span></span>
+            <span class="font-mono-tech font-semibold text-slate-600 whitespace-nowrap">
               ${display.priceDelta === 0 ? 'Included' : display.priceDelta > 0 ? `+${usd(display.priceDelta)}` : `-${usd(Math.abs(display.priceDelta))}`}
-    </span>
-    </div>
-    <div class="flex flex-wrap items-center gap-2">
+            </span>
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5">
             ${display.colorVariants
               .map((v) => {
                 const isSel = v.name === display.selectedFinish;
+                const deltaText =
+                  v.priceDelta === 0
+                    ? 'Included'
+                    : v.priceDelta > 0
+                    ? `+${usd(v.priceDelta)}`
+                    : `-${usd(Math.abs(v.priceDelta))}`;
                 return `
-    <button type="button" data-modal-color-name="${esc(v.name)}" class="px-3 py-1.5 rounded-xl text-xs font-medium border flex items-center gap-2 cursor-pointer transition-all ${ isSel ? 'bg-[#0D1015] text-white border-[#0D1015]' : 'bg-white text-[#0D1015] border-slate-200 hover:border-[#0095FF]' }">
-    <span class="w-3.5 h-3.5 rounded-full border border-black/20 shrink-0" style="background-color: ${esc(v.hex)}"></span>
-    <span>${esc(v.shortLabel)}</span>
-    </button>
+                  <button
+                    type="button"
+                    data-modal-color-name="${esc(v.name)}"
+                    class="px-2.5 py-1.5 rounded-xl text-xs font-medium border inline-flex items-center gap-1.5 cursor-pointer transition-all ${
+                      isSel
+                        ? 'bg-[#0D1015] text-white border-[#0D1015] shadow-2xs'
+                        : 'bg-white text-[#0D1015] border-slate-200 hover:border-[#0095FF]'
+                    }"
+                  >
+                    <span class="w-3 h-3 rounded-full border border-black/20 shrink-0" style="background-color: ${esc(v.hex)}"></span>
+                    <span>${esc(v.name)}</span>
+                    <span class="text-[10px] opacity-80 font-mono-tech whitespace-nowrap">(${esc(deltaText)})</span>
+                  </button>
                 `;
               })
               .join('')}
-    </div>
-    </div>
+          </div>
+        </div>
 
-    <div class="pt-2 space-y-2.5">
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-    <button type="button" id="modal-add-to-cart-btn" ${display.isOutOfStock ? 'disabled' : ''} class="py-3 px-4 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${ display.isOutOfStock ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-[#0095FF] hover:bg-[#0077CC] text-white cursor-pointer shadow-xs' }">
+        <!-- Material Selection (Product Details Customization) -->
+        ${
+          availableMaterials.length > 0
+            ? `<div class="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="font-semibold text-[#0D1015]">Workshop Material: <span class="text-[#0077CC]">${esc(selectedMaterialObj ? selectedMaterialObj.name : 'Solid Hardwood & Upholstery')}</span></span>
+                  <span class="text-[11px] text-slate-500">${esc(selectedMaterialObj ? selectedMaterialObj.category : 'Kiln-Dried Grade')}</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  ${availableMaterials
+                    .slice(0, 5)
+                    .map((mat) => {
+                      const isMatSel = mat.id === (selectedMaterialObj?.id || selectedMatId);
+                      return `
+                        <button
+                          type="button"
+                          data-modal-material-id="${esc(mat.id)}"
+                          class="px-2.5 py-1 rounded-lg text-[11px] font-medium border cursor-pointer transition-all ${
+                            isMatSel
+                              ? 'bg-[#0095FF] text-white border-[#0095FF]'
+                              : 'bg-white text-slate-700 border-slate-200 hover:border-[#0095FF]'
+                          }"
+                        >
+                          ${esc(mat.name)}
+                        </button>
+                      `;
+                    })
+                    .join('')}
+                </div>
+              </div>`
+            : ''
+        }
+
+        <div class="pt-1 space-y-2">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button type="button" id="modal-add-to-cart-btn" ${display.isOutOfStock ? 'disabled' : ''} class="py-3 px-4 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${ display.isOutOfStock ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-[#0095FF] hover:bg-[#0077CC] text-white cursor-pointer shadow-xs' }">
               ${display.isOutOfStock ? 'Out of Stock' : 'Add to Cart'}
-    </button>
-    <button type="button" id="modal-make-offer-btn" data-testid="modal-make-offer-btn" class="py-3 px-4 rounded-xl bg-[#0D1015] hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer text-center">
+            </button>
+            <button type="button" id="modal-make-offer-btn" data-testid="modal-make-offer-btn" class="py-3 px-4 rounded-xl bg-[#0D1015] hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer text-center">
               Make Offer
-    </button>
-    </div>
-    </div>
-    </div>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
@@ -929,6 +1044,16 @@ function openProductDetailModal(productId) {
         if (document.getElementById('catalog-page-grid')) {
           renderCatalogPage();
         }
+        openProductDetailModal(product.id);
+      }
+    });
+  });
+
+  body.querySelectorAll('[data-modal-material-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mid = btn.getAttribute('data-modal-material-id');
+      if (mid) {
+        state.selectedMaterialByProduct[product.id] = mid;
         openProductDetailModal(product.id);
       }
     });
@@ -1594,126 +1719,115 @@ function renderCatalogGrid() {
   }
 
   grid.innerHTML = displayed
-    .map((item) => {
-      const selectedFinish =
-        state.selectedColorByProduct[item.id] ||
-        item.colorVariants?.[0]?.name ||
-        item.defaultFinish;
-      const display = formatCustomerProductDisplay(item, selectedFinish);
-      const productPageUrl = `catalog.html?category=${encodeURIComponent(item.categoryId)}&product=${encodeURIComponent(item.id)}`;
-
-      const stockBadgeClass = display.isOutOfStock
-        ? 'bg-rose-600 text-white'
-        : display.isLowStock
-        ? 'bg-amber-500 text-slate-950'
-        : 'bg-white/95 text-[#0D1015] border border-slate-200/80';
-
-      return `
-    <article class="group rounded-2xl bg-white border border-[#BCE3FF] hover:border-[#0095FF] overflow-hidden shadow-2xs hover:shadow-xl transition-all flex flex-col justify-between">
-    <div>
-    <a href="${esc(productPageUrl)}" data-testid="home-product-card-link-${esc(item.id)}" class="block aspect-[4/3] relative overflow-hidden bg-slate-100">
-    <img src="${esc(display.image)}" alt="${esc(display.name)}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-    <div class="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-1.5">
-    <div class="flex flex-wrap gap-1.5">
-                  ${
-                    item.isBestSeller
-                      ? `<span class="px-2.5 py-1 rounded-md bg-[#0095FF] text-white font-mono-tech text-[11px] font-bold">${esc(item.bestSellerBadge || 'Best Seller')}</span>`
-                      : ''
-                  }
-    <span data-testid="shop-stock-badge-${esc(item.id)}" class="px-2.5 py-1 rounded-md text-[11px] font-semibold shadow-2xs ${stockBadgeClass}">
-                    ${esc(display.availabilityLabel)}
-    </span>
-    </div>
-                ${
-                  display.hasDiscount
-                    ? `<span class="px-2.5 py-1 rounded-md bg-[#0D1015] text-white font-mono-tech text-[11px] font-bold">Save ${display.discountPercent}%</span>`
-                    : ''
-                }
-    </div>
-    <div class="absolute bottom-3 left-3">
-    <span class="px-2.5 py-1 rounded-md bg-white/95 text-[#0D1015] font-mono-tech text-[11px] font-semibold">
-                  ${esc(item.sku)} · ${esc(display.categoryName)}
-    </span>
-    </div>
-    </a>
-
-    <div class="p-5 space-y-3">
-    <div class="flex items-start justify-between gap-3">
-    <a href="${esc(productPageUrl)}" class="font-serif-display text-lg font-bold text-[#0D1015] hover:text-[#0095FF] leading-snug transition-colors">
-                  ${esc(display.name)}
-    </a>
-    <div class="text-right shrink-0">
-                  ${
-                    display.hasDiscount
-                      ? `<p class="font-mono-tech text-xs text-slate-400 line-through">${usd(display.variantBasePrice)}</p>`
-                      : ''
-                  }
-    <p class="font-mono-tech text-xl font-bold text-[#0095FF]">${usd(display.effectivePrice)}</p>
-    </div>
-    </div>
-
-    <p class="text-xs text-[#475569] leading-relaxed line-clamp-2">${esc(display.description)}</p>
-
-    <div class="p-3 rounded-xl bg-slate-50 border border-slate-200/90 space-y-2">
-    <div class="flex items-center justify-between text-[11px]">
-    <span class="font-medium text-slate-700">Finish: <strong class="text-[#0D1015]">${esc(display.selectedFinish)}</strong></span>
-    <span class="text-slate-500 font-medium">
-                    ${display.priceDelta === 0 ? 'Included' : display.priceDelta > 0 ? `+${usd(display.priceDelta)}` : `-${usd(Math.abs(display.priceDelta))}`}
-    </span>
-    </div>
-    <div class="flex flex-wrap items-center gap-1.5">
-                  ${display.colorVariants
-                    .map((v) => {
-                      const isSel = v.name === display.selectedFinish;
-                      return `
-    <button type="button" data-color-product="${esc(item.id)}" data-color-name="${esc(v.name)}" class="px-2.5 py-1 rounded-lg text-[11px] font-medium border flex items-center gap-1.5 cursor-pointer transition-all ${ isSel ? 'bg-[#0D1015] text-white border-[#0D1015]' : 'bg-white text-slate-700 border-slate-200 hover:border-[#0095FF]' }">
-    <span class="w-3 h-3 rounded-full border border-black/20 shrink-0" style="background-color: ${esc(v.hex)}"></span>
-    <span class="truncate max-w-[115px]">${esc(v.shortLabel)}</span>
-    </button>
-                      `;
-                    })
-                    .join('')}
-    </div>
-    </div>
-
-    <div class="pt-1 flex items-center justify-between text-[11px] text-[#64748B] font-mono-tech">
-    <span>${esc(display.dimensions)}</span>
-    <span>${esc(display.availabilityDetail)}</span>
-    </div>
-    </div>
-    </div>
-
-    <div class="px-5 pb-5 pt-2 space-y-2">
-    <a href="${esc(productPageUrl)}" data-testid="home-product-open-catalog-${esc(item.id)}" class="block w-full py-2.5 px-3 rounded-xl bg-[#0D1015] hover:bg-[#0095FF] text-white text-xs font-semibold transition-colors text-center">
-              View in Catalog &amp; Filter by Color →
-    </a>
-    <div class="grid grid-cols-2 gap-2">
-    <button type="button" data-add-cart="${esc(item.id)}" ${display.isOutOfStock ? 'disabled' : ''} class="py-2.5 px-3 rounded-xl text-xs font-semibold transition-colors ${ display.isOutOfStock ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-[#0095FF] hover:bg-[#0077CC] text-white cursor-pointer' }">
-                ${display.isOutOfStock ? 'Out of Stock' : 'Add to Cart'}
-    </button>
-    <button type="button" data-view-product="${esc(item.id)}" aria-label="View details for ${esc(display.name)}" class="py-2.5 px-3 rounded-xl bg-[#D8EEFF] hover:bg-[#BCE3FF] text-[#0D1015] text-xs font-semibold transition-colors cursor-pointer">
-                View Details
-    </button>
-    </div>
-    </div>
-    </article>
-      `;
-    })
+    .map((item) => renderSimplifiedProductCard(item, { cardTestId: `home-product-card-${item.id}` }))
     .join('');
 
-  // Bind color swatch buttons
-  grid.querySelectorAll('[data-color-product]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const pid = btn.getAttribute('data-color-product');
-      const cname = btn.getAttribute('data-color-name');
-      if (pid && cname) {
-        state.selectedColorByProduct[pid] = cname;
-        renderCatalogGrid();
-      }
-    });
-  });
-
   bindStorefrontProductButtons(grid);
+}
+
+function renderSimplifiedProductCard(item, options = {}) {
+  const selectedFinish =
+    state.selectedColorByProduct[item.id] ||
+    item.colorVariants?.[0]?.name ||
+    item.defaultFinish;
+  const card = formatSimplifiedProductCardData(item, selectedFinish);
+  const isSpotlighted = Boolean(options.isSpotlighted);
+  const cardTestId = options.cardTestId || `product-card-${card.id}`;
+
+  const stockBadgeClass = card.isOutOfStock
+    ? 'bg-rose-600 text-white'
+    : card.isLowStock
+    ? 'bg-amber-500 text-slate-950'
+    : 'bg-white/95 text-[#0D1015] border border-slate-200/80';
+
+  return `
+    <article
+      data-testid="${esc(cardTestId)}"
+      class="group h-full rounded-2xl bg-white border ${
+        isSpotlighted
+          ? 'border-[#0095FF] ring-2 ring-[#0095FF]/20'
+          : 'border-slate-200 hover:border-[#0095FF]'
+      } overflow-hidden shadow-2xs hover:shadow-xl transition-all duration-300 flex flex-col justify-between"
+    >
+      <div class="flex flex-col flex-1">
+        <div
+          data-view-product="${esc(card.id)}"
+          data-testid="home-product-card-link-${esc(card.id)}"
+          role="button"
+          tabindex="0"
+          aria-label="View ${esc(card.name)}"
+          class="block aspect-[4/3] relative overflow-hidden bg-slate-100 cursor-pointer shrink-0"
+        >
+          <img
+            src="${esc(card.image)}"
+            alt="${esc(card.name)}"
+            class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          />
+          <div class="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-1.5">
+            <span
+              data-testid="shop-stock-badge-${esc(card.id)}"
+              class="px-2.5 py-1 rounded-md text-[11px] font-semibold shadow-2xs ${stockBadgeClass}"
+            >
+              ${esc(card.availabilityLabel)}
+            </span>
+            ${
+              card.hasDiscount
+                ? `<span class="px-2.5 py-1 rounded-md bg-[#0D1015] text-white font-mono-tech text-[11px] font-bold">Save ${card.discountPercent}%</span>`
+                : ''
+            }
+          </div>
+        </div>
+
+        <div class="p-5 flex flex-col flex-1 justify-between gap-3.5">
+          <div class="space-y-2">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-[#0095FF]">
+              ${esc(card.categoryName)}
+            </p>
+
+            <div class="flex items-start justify-between gap-3">
+              <h3
+                data-view-product="${esc(card.id)}"
+                class="font-serif-display text-lg font-bold text-[#0D1015] group-hover:text-[#0095FF] leading-snug transition-colors cursor-pointer line-clamp-2 min-h-[2.75rem]"
+                title="${esc(card.name)}"
+              >
+                ${esc(card.name)}
+              </h3>
+              <div class="text-right shrink-0">
+                ${
+                  card.hasDiscount && card.originalPrice !== null
+                    ? `<p class="font-mono-tech text-xs text-slate-400 line-through leading-none mb-0.5">${usd(card.originalPrice)}</p>`
+                    : ''
+                }
+                <p class="font-mono-tech text-lg sm:text-xl font-bold text-[#0095FF] leading-none">
+                  ${usd(card.sellingPrice)}
+                </p>
+              </div>
+            </div>
+
+            <p class="text-xs text-[#475569] leading-relaxed line-clamp-2 min-h-[2.5rem]">
+              ${esc(card.description)}
+            </p>
+          </div>
+
+          <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 text-[11px] text-[#64748B] font-mono-tech">
+            <span class="truncate" title="${esc(card.dimensions)}">${esc(card.dimensions)}</span>
+            <span class="shrink-0">${esc(card.shippingTimeLabel)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="px-5 pb-5 pt-0 mt-auto">
+        <button
+          type="button"
+          data-view-product="${esc(card.id)}"
+          data-testid="view-product-btn-${esc(card.id)}"
+          class="w-full py-2.5 px-4 rounded-xl bg-[#0D1015] hover:bg-[#0095FF] text-white text-xs font-semibold transition-colors cursor-pointer text-center shadow-2xs"
+        >
+          ${esc(card.ctaLabel)}
+        </button>
+      </div>
+    </article>
+  `;
 }
 
 function renderCartDrawer(stockWarningMessage = '') {
@@ -1944,6 +2058,21 @@ function initDashboardPage() {
 
   if (activeUser.name) state.customerProfile.name = activeUser.name;
   if (activeUser.email) state.customerProfile.email = activeUser.email;
+  if (activeUser.avatar && !state.customerProfile.avatar) {
+    state.customerProfile.avatar = activeUser.avatar;
+  }
+  const matchedCustRecord = (state.customers || []).find(
+    (c) => String(c.email || '').trim().toLowerCase() === String(activeUser.email || '').trim().toLowerCase()
+  );
+  if (matchedCustRecord && String(activeUser.email || '').trim().toLowerCase() !== 'rowena.vance@vancearchitects.com') {
+    state.customerProfile.phone = matchedCustRecord.phoneNumber || matchedCustRecord.phone || '';
+    state.customerProfile.address = matchedCustRecord.address || '';
+    state.customerProfile.city = matchedCustRecord.city || '';
+    state.customerProfile.notes = matchedCustRecord.notes || '';
+    if (matchedCustRecord.avatar) {
+      state.customerProfile.avatar = matchedCustRecord.avatar;
+    }
+  }
 
   // Show ONLY the dashboard matching the logged-in user's role.
   // When Admin logs in, hide the customer top header so ALL admin navigation lives in the unified Left Sidebar.
@@ -1963,15 +2092,7 @@ function initDashboardPage() {
   if (sidebarEmail) sidebarEmail.textContent = state.customerProfile.email;
   if (adminSidebarName) adminSidebarName.textContent = state.customerProfile.name;
   if (adminSidebarEmail) adminSidebarEmail.textContent = state.customerProfile.email;
-  if (sidebarInitials) {
-    const initials = state.customerProfile.name
-      .split(' ')
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() || '')
-      .join('');
-    sidebarInitials.textContent = initials || 'LR';
-  }
+  syncCustomerAvatarDOM(state.customerProfile);
 
   const handlePortalLogout = async (e) => {
     e.preventDefault();
@@ -2028,6 +2149,72 @@ function initDashboardPage() {
     switchClientTab(requestedClientTab);
   }
 
+  // Customer Profile Picture File Upload & Clear
+  const applyCustomerAvatarUpdate = (newAvatarSrc) => {
+    const cleanAvatar = String(newAvatarSrc || '').trim();
+    state.customerProfile.avatar = cleanAvatar;
+    if (state.sessionUser) {
+      state.sessionUser.avatar = cleanAvatar;
+    }
+    const activeEmail = String(state.customerProfile.email || state.sessionUser?.email || '')
+      .trim()
+      .toLowerCase();
+    if (activeEmail && Array.isArray(state.customers)) {
+      state.customers = state.customers.map((c) =>
+        String(c.email || '').trim().toLowerCase() === activeEmail
+          ? { ...c, avatar: cleanAvatar }
+          : c
+      );
+    }
+    syncCustomerAvatarDOM(state.customerProfile);
+    saveCustomerProfileToStorage();
+  };
+
+  const clientAvatarFileInput = document.getElementById('client-profile-avatar-file');
+  if (clientAvatarFileInput) {
+    clientAvatarFileInput.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const resultDataUrl = typeof reader.result === 'string' ? reader.result : '';
+        if (!resultDataUrl) return;
+        applyCustomerAvatarUpdate(resultDataUrl);
+
+        try {
+          const response = await fetch(`${API_ENDPOINT}?action=upload_product_image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'upload_product_image',
+              fileName: `avatar_${file.name || 'profile.jpg'}`,
+              dataUrl: resultDataUrl,
+            }),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data && data.ok && data.imagePath) {
+              applyCustomerAvatarUpdate(data.imagePath);
+            }
+          }
+        } catch (_err) {
+          // Keep Data URL fallback if server file write is unavailable
+        }
+        showClientBanner('Updated your profile picture.');
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const clientAvatarClearBtn = document.getElementById('client-profile-avatar-clear-btn');
+  if (clientAvatarClearBtn) {
+    clientAvatarClearBtn.addEventListener('click', () => {
+      if (clientAvatarFileInput) clientAvatarFileInput.value = '';
+      applyCustomerAvatarUpdate('');
+      showClientBanner('Removed your profile picture.');
+    });
+  }
+
   // Customer Address & Contact Form Submit
   const addressForm = document.getElementById('client-address-form');
   if (addressForm) {
@@ -2039,6 +2226,7 @@ function initDashboardPage() {
       const cityVal = document.getElementById('client-input-city')?.value.trim() || state.customerProfile.city;
       const addressVal = document.getElementById('client-input-address')?.value.trim() || state.customerProfile.address;
       const notesVal = document.getElementById('client-input-notes')?.value.trim() || state.customerProfile.notes;
+      const avatarVal = document.getElementById('client-input-avatar')?.value.trim() ?? (state.customerProfile.avatar || '');
 
       state.customerProfile = {
         name: nameVal,
@@ -2047,12 +2235,22 @@ function initDashboardPage() {
         city: cityVal,
         address: addressVal,
         notes: notesVal,
+        avatar: avatarVal,
       };
+      if (Array.isArray(state.customers)) {
+        const targetEmail = emailVal.toLowerCase();
+        state.customers = state.customers.map((c) =>
+          String(c.email || '').trim().toLowerCase() === targetEmail
+            ? { ...c, name: nameVal, fullName: nameVal, phone: phoneVal, phoneNumber: phoneVal, address: addressVal, avatar: avatarVal }
+            : c
+        );
+      }
       saveCustomerProfileToStorage();
 
       if (state.sessionUser) {
         state.sessionUser.name = nameVal;
         state.sessionUser.email = emailVal;
+        state.sessionUser.avatar = avatarVal;
         saveSessionUserToServer(state.sessionUser);
       }
       if (welcomeName) welcomeName.textContent = nameVal;
@@ -2060,8 +2258,9 @@ function initDashboardPage() {
       if (sidebarName) sidebarName.textContent = nameVal;
       if (sidebarEmail) sidebarEmail.textContent = emailVal;
       if (userBadge) userBadge.textContent = `${nameVal} (Customer)`;
+      syncCustomerAvatarDOM(state.customerProfile);
 
-      showClientBanner('Saved your updated Address & Contact information.');
+      showClientBanner('Saved your updated Profile, Address & Contact information.');
       renderDashboardContent();
     });
   }
@@ -2314,6 +2513,12 @@ function initDashboardPage() {
       description:
         'View registered client profiles, delivery addresses, order history, and lifetime spend.',
     },
+    analytics: {
+      eyebrow: 'Business Intelligence & Reporting',
+      title: 'Analytics & Business Reports',
+      description:
+        'Monthly performance KPIs, daily & annual revenue trends, best-selling pieces, order status distribution, customer retention, inventory movements, and voucher analytics.',
+    },
   };
 
   // Wire Custom Order Commission Builder toggle buttons in Customer Dashboard
@@ -2477,12 +2682,36 @@ function initDashboardPage() {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
         const resultDataUrl = typeof reader.result === 'string' ? reader.result : '';
-        if (prodImageInput && resultDataUrl) {
+        if (!resultDataUrl) return;
+        if (prodImageInput) {
           prodImageInput.value = resultDataUrl;
-          syncProductImagePreview(resultDataUrl);
-          if (prodErrorEl) prodErrorEl.classList.add('hidden');
+        }
+        syncProductImagePreview(resultDataUrl);
+        if (prodErrorEl) prodErrorEl.classList.add('hidden');
+
+        try {
+          const response = await fetch('src/api.php?action=upload_product_image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'upload_product_image',
+              fileName: file.name || 'product.jpg',
+              dataUrl: resultDataUrl,
+            }),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data && data.ok && data.imagePath) {
+              if (prodImageInput) {
+                prodImageInput.value = data.imagePath;
+              }
+              syncProductImagePreview(data.imagePath);
+            }
+          }
+        } catch (_err) {
+          // Keep Data URL fallback if server file write is unavailable
         }
       };
       reader.readAsDataURL(file);
@@ -2524,8 +2753,8 @@ function initDashboardPage() {
     const minStockEl = document.getElementById('prod-min-stock');
     const colEl = document.getElementById('prod-colors');
     if (nameEl) nameEl.value = '';
-    if (skuEl) skuEl.value = '';
-    if (catEl) catEl.value = 'dining';
+    if (catEl) catEl.value = 'living';
+    if (skuEl) skuEl.value = generateOwnEntityId('product', '', catEl ? catEl.value : 'living').codeId;
     if (priceEl) priceEl.value = '2850';
     if (discEl) discEl.value = '0';
     if (dimEl) dimEl.value = '240cm L × 100cm W × 75cm H';
@@ -2593,6 +2822,20 @@ function initDashboardPage() {
   if (prodTypeSelect) {
     prodTypeSelect.addEventListener('change', () => {
       syncProductFormTypeUI();
+    });
+  }
+
+  const prodCatSelect = document.getElementById('prod-category');
+  if (prodCatSelect) {
+    prodCatSelect.addEventListener('change', () => {
+      const isEditing = Boolean(prodEditIdInput && prodEditIdInput.value);
+      if (isEditing) return;
+      const skuEl = document.getElementById('prod-sku');
+      if (!skuEl) return;
+      const currentSku = skuEl.value.trim().toUpperCase();
+      if (!currentSku || /^LR-[A-Z]{2,3}-\d{3}$/.test(currentSku)) {
+        skuEl.value = generateOwnEntityId('product', '', prodCatSelect.value).codeId;
+      }
     });
   }
 
@@ -2711,14 +2954,18 @@ function initDashboardPage() {
   const confirmAcceptBtn = document.getElementById('admin-confirm-accept');
   if (confirmCancelBtn && confirmModal) {
     confirmCancelBtn.addEventListener('click', () => {
-      confirmModal.classList.add('hidden');
+      const cancelFn = pendingCancelAction;
       pendingConfirmAction = null;
+      pendingCancelAction = null;
+      confirmModal.classList.add('hidden');
+      if (typeof cancelFn === 'function') cancelFn();
     });
   }
   if (confirmAcceptBtn && confirmModal) {
     confirmAcceptBtn.addEventListener('click', () => {
       const fn = pendingConfirmAction;
       pendingConfirmAction = null;
+      pendingCancelAction = null;
       confirmModal.classList.add('hidden');
       if (typeof fn === 'function') fn();
     });
@@ -3145,8 +3392,16 @@ function startVoucherCountdownTicker() {
 }
 
 let pendingConfirmAction = null;
+let pendingCancelAction = null;
 
-function openAdminConfirmModal({ title, message, confirmLabel = 'Confirm', onConfirm }) {
+function openAdminConfirmModal({
+  title,
+  message,
+  confirmLabel = 'Confirm',
+  confirmVariant = 'danger',
+  onConfirm,
+  onCancel = null,
+}) {
   const modal = document.getElementById('admin-confirm-modal');
   const titleEl = document.getElementById('admin-confirm-title');
   const msgEl = document.getElementById('admin-confirm-message');
@@ -3157,8 +3412,15 @@ function openAdminConfirmModal({ title, message, confirmLabel = 'Confirm', onCon
   }
   if (titleEl) titleEl.textContent = title || 'Confirm Action';
   if (msgEl) msgEl.textContent = message || 'Are you sure you want to proceed?';
-  if (acceptBtn) acceptBtn.textContent = confirmLabel;
+  if (acceptBtn) {
+    acceptBtn.textContent = confirmLabel;
+    acceptBtn.className =
+      confirmVariant === 'primary'
+        ? 'admin-btn admin-btn-primary'
+        : 'admin-btn admin-btn-danger';
+  }
   pendingConfirmAction = onConfirm;
+  pendingCancelAction = onCancel;
   modal.classList.remove('hidden');
 }
 
@@ -3205,66 +3467,87 @@ function renderDashboardContent() {
 
   if (shouldRenderClient) {
     const myOrders = state.orders.filter(
-      (o) => o.clientEmail.toLowerCase() === userEmail.toLowerCase()
+      (o) => String(o.clientEmail || '').trim().toLowerCase() === userEmail.toLowerCase()
     );
-  const displayOrders = myOrders.length > 0 ? myOrders : state.orders.slice(0, 2);
+    const displayOrders = myOrders;
 
-  // Strictly show ONLY vouchers assigned to the logged-in customer's email address
-  const displayVouchers = filterCustomerVouchers(state.vouchers, userEmail);
-  const usableCustomerVouchers = displayVouchers.filter(
-    (v) => computeVoucherStatusInfo(v).isUsable
-  );
+    // Strictly show ONLY vouchers assigned to the logged-in customer's email address
+    const displayVouchers = filterCustomerVouchers(state.vouchers, userEmail);
+    const usableCustomerVouchers = displayVouchers.filter(
+      (v) => computeVoucherStatusInfo(v).isUsable
+    );
 
-  // Update Summary KPI Cards & Sidebar Badges
-  const statOrders = document.getElementById('user-stat-orders');
-  const statVouchers = document.getElementById('user-stat-vouchers');
-  const statCart = document.getElementById('user-stat-cart');
-  const badgeOrders = document.getElementById('sidebar-badge-orders');
-  const badgeCart = document.getElementById('sidebar-badge-cart');
-  const badgeVouchers = document.getElementById('sidebar-badge-vouchers');
-  const cartQty = state.cartItems.reduce((sum, c) => sum + c.quantity, 0);
+    // Update Summary KPI Cards & Sidebar Badges
+    const statOrders = document.getElementById('user-stat-orders');
+    const statVouchers = document.getElementById('user-stat-vouchers');
+    const statCart = document.getElementById('user-stat-cart');
+    const badgeOrders = document.getElementById('sidebar-badge-orders');
+    const badgeTransactions = document.getElementById('sidebar-badge-transactions');
+    const badgeCart = document.getElementById('sidebar-badge-cart');
+    const badgeVouchers = document.getElementById('sidebar-badge-vouchers');
+    const cartQty = state.cartItems.reduce((sum, c) => sum + c.quantity, 0);
+    const completedTransactions = getCompletedTransactionsForCustomer(displayOrders, userEmail);
+    const activeClientOrdersCount = displayOrders.filter((o) => !isOrderCompleted(o)).length;
 
-  if (statOrders) statOrders.textContent = `${displayOrders.length} Active Orders`;
-  if (statVouchers) statVouchers.textContent = `${usableCustomerVouchers.length} Ready to Use`;
-  if (statCart) statCart.textContent = `${cartQty} ${cartQty === 1 ? 'Item' : 'Items'}`;
-  if (badgeOrders) badgeOrders.textContent = String(displayOrders.length);
-  if (badgeCart) badgeCart.textContent = String(cartQty);
-  if (badgeVouchers) badgeVouchers.textContent = String(usableCustomerVouchers.length);
+    if (statOrders) statOrders.textContent = `${activeClientOrdersCount} Active ${activeClientOrdersCount === 1 ? 'Order' : 'Orders'}`;
+    if (statVouchers) statVouchers.textContent = `${usableCustomerVouchers.length} Ready to Use`;
+    if (statCart) statCart.textContent = `${cartQty} ${cartQty === 1 ? 'Item' : 'Items'}`;
+    if (badgeOrders) badgeOrders.textContent = String(displayOrders.length);
+    if (badgeTransactions) badgeTransactions.textContent = String(completedTransactions.length);
+    if (badgeCart) badgeCart.textContent = String(cartQty);
+    if (badgeVouchers) badgeVouchers.textContent = String(usableCustomerVouchers.length);
 
-  // Populate Home Tab Previews (Latest Order + Address Preview + Live Catalog Feed)
-  const homeOrderPreview = document.getElementById('client-home-order-preview');
-  if (homeOrderPreview && displayOrders[0]) {
-    const latest = displayOrders[0];
-    const matched = state.catalog.find((p) => p.id === latest.furnitureId) || state.catalog[0];
-    const imgUrl = (matched ? matched.image : 'assets/images/category_dining_tables.jpg').replace(/^\//, '');
-    homeOrderPreview.innerHTML = `
-    <div class="pt-4 border-t border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-    <div class="flex items-center gap-3.5">
-    <img src="${esc(imgUrl)}" alt="${esc(latest.furnitureName)}" class="w-16 h-16 rounded-xl object-cover border border-[#BCE3FF] shrink-0" />
-    <div>
-    <p class="font-mono-tech text-xs text-[#0077CC] font-bold">${esc(latest.status)} · #${esc(latest.orderNumber)}</p>
-    <h3 class="font-serif-display text-base font-bold text-[#0D1015] mt-0.5">${esc(latest.furnitureName)}</h3>
-    <p class="text-xs text-[#475569]">
-              Finish: <strong class="text-[#0D1015]">${esc(latest.selectedFinish)}</strong> · Size: ${esc(latest.customDimensions || 'Standard Dimensions')}
-    </p>
-    <p class="text-[11px] text-[#64748B] mt-0.5">
-              Workshop Material: <strong class="text-[#0D1015]">${esc(latest.materialName || 'FAS Hardwood')}</strong> · Est. Lead Time: <strong class="text-[#0077CC]">${esc(latest.estimatedDelivery)}</strong>
-    </p>
-    </div>
-    </div>
-    <p class="font-mono-tech text-lg font-bold text-[#0095FF] shrink-0">${usd(latest.totalAmount)}</p>
-    </div>
-    `;
-  }
+    // Populate Home Tab Previews (Latest Order + Address Preview + Live Catalog Feed)
+    const homeOrderPreview = document.getElementById('client-home-order-preview');
+    if (homeOrderPreview) {
+      if (displayOrders[0]) {
+        const latest = displayOrders[0];
+        const matched = state.catalog.find((p) => p.id === latest.furnitureId) || state.catalog[0];
+        const imgUrl = (matched ? matched.image : 'assets/images/category_dining_tables.jpg').replace(/^\//, '');
+        homeOrderPreview.innerHTML = `
+        <div class="pt-4 border-t border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div class="flex items-center gap-3.5">
+            <img src="${esc(imgUrl)}" alt="${esc(latest.furnitureName)}" class="w-16 h-16 rounded-xl object-cover border border-[#BCE3FF] shrink-0" />
+            <div>
+              <p class="font-mono-tech text-xs text-[#0077CC] font-bold">${esc(latest.status)} · #${esc(latest.orderNumber)}</p>
+              <h3 class="font-serif-display text-base font-bold text-[#0D1015] mt-0.5">${esc(latest.furnitureName)}</h3>
+              <p class="text-xs text-[#475569]">
+                Finish: <strong class="text-[#0D1015]">${esc(latest.selectedFinish)}</strong> · Size: ${esc(latest.customDimensions || 'Standard Dimensions')}
+              </p>
+              <p class="text-[11px] text-[#64748B] mt-0.5">
+                Workshop Material: <strong class="text-[#0D1015]">${esc(latest.materialName || 'FAS Hardwood')}</strong> · Est. Lead Time: <strong class="text-[#0077CC]">${esc(latest.estimatedDelivery)}</strong>
+              </p>
+            </div>
+          </div>
+          <p class="font-mono-tech text-lg font-bold text-[#0095FF] shrink-0">${usd(latest.totalAmount)}</p>
+        </div>
+        `;
+      } else {
+        homeOrderPreview.innerHTML = `
+        <div class="pt-4 border-t border-[#E2E8F0] text-center py-6 space-y-2">
+          <p class="text-sm font-bold text-[#0D1015]">No Active Orders Yet</p>
+          <p class="text-xs text-[#64748B]">Explore our showroom catalog below or commission a custom piece to place your first order.</p>
+        </div>
+        `;
+      }
+    }
 
   const homeAddrPreview = document.getElementById('client-home-address-preview');
   if (homeAddrPreview) {
+    const formattedAddr = [state.customerProfile.address, state.customerProfile.city]
+      .map((s) => String(s || '').trim())
+      .filter(Boolean)
+      .join(', ');
     homeAddrPreview.innerHTML = `
     <div class="pt-4 border-t border-[#E2E8F0] space-y-1.5">
     <p class="font-serif-display text-sm font-bold text-[#0D1015]">${esc(state.customerProfile.name)}</p>
-    <p class="font-mono-tech text-xs text-[#0077CC]">${esc(state.customerProfile.phone)}</p>
-    <p class="text-xs text-[#0D1015]">${esc(state.customerProfile.address)}, ${esc(state.customerProfile.city)}</p>
-    <p class="text-[11px] text-[#64748B] pt-1">${esc(state.customerProfile.notes)}</p>
+    <p class="font-mono-tech text-xs text-[#0077CC]">${esc(state.customerProfile.phone || 'No phone number added')}</p>
+    <p class="text-xs text-[#0D1015]">${esc(formattedAddr || 'No delivery address added')}</p>
+    ${
+      state.customerProfile.notes
+        ? `<p class="text-[11px] text-[#64748B] pt-1">${esc(state.customerProfile.notes)}</p>`
+        : ''
+    }
     </div>
     `;
   }
@@ -3275,44 +3558,41 @@ function renderDashboardContent() {
     const featuredItems = state.catalog.slice(0, 6);
     homeCatalogFeedEl.innerHTML = featuredItems
       .map((prod) => {
-        const imgUrl = (prod.image || 'assets/images/category_dining_tables.jpg').replace(/^\//, '');
-        const st = getProductStockStatus(prod);
-        const isDiscounted = Number(prod.discountPercent || 0) > 0;
+        const card = formatSimplifiedProductCardData(prod);
+        const imgUrl = (card.image || 'assets/images/category_dining_tables.jpg').replace(/^\//, '');
         return `
-    <div class="p-4 rounded-2xl border border-[#BCE3FF] bg-[#F8FBFF] flex flex-col justify-between gap-3">
+    <div class="p-4 rounded-2xl border border-[#BCE3FF] bg-[#F8FBFF] flex flex-col justify-between gap-3 h-full">
     <div class="flex items-start gap-3.5">
-    <img src="${esc(imgUrl)}" alt="${esc(prod.name)}" class="w-16 h-16 rounded-xl object-cover border border-[#BCE3FF] shrink-0" />
+    <img src="${esc(imgUrl)}" alt="${esc(card.name)}" class="w-16 h-16 rounded-xl object-cover border border-[#BCE3FF] shrink-0" />
     <div class="min-w-0 flex-1">
     <div class="flex items-center justify-between gap-1">
-    <span class="font-mono-tech text-[11px] font-bold text-[#0077CC]">${esc(prod.sku)}</span>
+    <span class="text-[11px] font-semibold uppercase tracking-wider text-[#0077CC]">${esc(card.categoryName)}</span>
     <span class="text-[11px] font-mono-tech font-semibold ${
-                    st.statusKey === 'out_of_stock'
+                    card.isOutOfStock
                       ? 'text-rose-700'
-                      : st.statusKey === 'low_stock'
+                      : card.isLowStock
                       ? 'text-amber-700'
                       : 'text-emerald-700'
-                  }">${st.availableStock} in stock</span>
+                  }">${esc(card.availabilityLabel)}</span>
     </div>
-    <h3 class="font-serif-display text-sm font-bold text-[#0D1015] truncate mt-0.5">${esc(prod.name)}</h3>
-    <p class="text-[11px] text-[#64748B] truncate">${esc(prod.dimensions || 'Standard Dimensions')}</p>
+    <h3 class="font-serif-display text-sm font-bold text-[#0D1015] truncate mt-0.5">${esc(card.name)}</h3>
+    <p class="text-[11px] text-[#475569] line-clamp-2 mt-0.5">${esc(card.description)}</p>
+    <p class="text-[11px] text-[#64748B] font-mono-tech truncate mt-1">${esc(card.dimensions)} · ${esc(card.shippingTimeLabel)}</p>
     <div class="flex items-baseline gap-2 mt-1">
-    <span class="font-mono-tech text-sm font-bold text-[#0095FF]">${usd(prod.effectivePrice)}</span>
+    <span class="font-mono-tech text-sm font-bold text-[#0095FF]">${usd(card.sellingPrice)}</span>
                   ${
-                    isDiscounted
-                      ? `<span class="font-mono-tech text-[11px] text-slate-400 line-through">${usd(prod.price)}</span>
-    <span class="text-[10px] font-bold text-emerald-700">${prod.discountPercent}% OFF</span>`
+                    card.hasDiscount && card.originalPrice !== null
+                      ? `<span class="font-mono-tech text-[11px] text-slate-400 line-through">${usd(card.originalPrice)}</span>
+    <span class="text-[10px] font-bold text-emerald-700">Save ${card.discountPercent}%</span>`
                       : ''
                   }
     </div>
     </div>
     </div>
-    <div class="flex items-center gap-2 pt-2 border-t border-[#E2E8F0]">
-    <button type="button" data-client-quick-add="${esc(prod.id)}" ${st.availableStock <= 0 ? 'disabled' : ''} class="flex-1 px-3 py-1.5 rounded-xl bg-[#0095FF] hover:bg-[#0077CC] text-white text-xs font-semibold transition-colors cursor-pointer ${ st.availableStock <= 0 ? 'opacity-50 cursor-not-allowed' : '' }">
-                ${st.availableStock <= 0 ? 'Out of Stock' : '+ Add to Cart'}
-    </button>
-    <button type="button" data-client-customize-prod="${esc(prod.id)}" class="px-3 py-1.5 rounded-xl border border-[#BCE3FF] bg-white hover:bg-[#EBF6FF] text-[#0077CC] text-xs font-semibold transition-colors cursor-pointer">
-                Customize
-    </button>
+    <div class="flex items-center gap-2 pt-2 border-t border-[#E2E8F0] mt-auto">
+    <a href="catalog.html?category=${encodeURIComponent(prod.categoryId || 'all')}&product=${encodeURIComponent(card.id)}" class="flex-1 px-3 py-2 rounded-xl bg-[#0D1015] hover:bg-[#0095FF] text-white text-xs font-semibold transition-colors cursor-pointer text-center">
+                ${esc(card.ctaLabel)}
+    </a>
     </div>
     </div>
         `;
@@ -3367,6 +3647,7 @@ function renderDashboardContent() {
   setInputVal('client-input-city', state.customerProfile.city);
   setInputVal('client-input-address', state.customerProfile.address);
   setInputVal('client-input-notes', state.customerProfile.notes);
+  syncCustomerAvatarDOM(state.customerProfile);
 
   // Custom Furniture Commission Builder Card (#client-custom-order-card)
   const customOrderCardEl = document.getElementById('client-custom-order-card');
@@ -3568,22 +3849,40 @@ function renderDashboardContent() {
   // 1. User-Friendly Customer Orders List (With Live Admin Production, Craftsperson, Material & Payment Actions)
   const friendlyOrdersEl = document.getElementById('client-orders-friendly-list');
   if (friendlyOrdersEl) {
-    friendlyOrdersEl.innerHTML = displayOrders
+    friendlyOrdersEl.innerHTML =
+      displayOrders.length === 0
+        ? `
+    <div class="bg-white rounded-3xl border border-[#BCE3FF] p-8 text-center space-y-3 shadow-2xs">
+      <p class="font-serif-display text-lg font-bold text-[#0D1015]">You Have Not Placed Any Orders Yet</p>
+      <p class="text-xs text-[#64748B] max-w-md mx-auto">
+        Once you checkout from your Cart or submit a Custom Commission above, your live workshop production progress will appear here.
+      </p>
+      <div class="pt-1">
+        <a href="catalog.html" class="inline-flex items-center px-5 py-2.5 rounded-xl bg-[#0095FF] hover:bg-[#0077CC] text-white text-xs font-semibold transition-colors">
+          Browse Furniture Catalog →
+        </a>
+      </div>
+    </div>
+        `
+        : displayOrders
       .map((ord) => {
         const matchedProd = state.catalog.find((p) => p.id === ord.furnitureId) || state.catalog[0];
         const imgUrl = (matchedProd ? matchedProd.image : 'assets/images/category_dining_tables.jpg').replace(/^\//, '');
 
         // Map workshop status to 4 friendly customer steps
+        const isCompleted = isOrderCompleted(ord);
         let friendlyStep = 1;
         if (ord.status.includes('Joinery') || ord.status.includes('Finishing') || ord.status.includes('Timber')) friendlyStep = 2;
         if (ord.status.includes('Quality')) friendlyStep = 3;
-        if (ord.status.includes('Dispatched') || ord.status.includes('Delivered')) friendlyStep = 4;
+        if (isCompleted || ord.status.includes('Dispatched') || ord.status.includes('Delivered')) friendlyStep = 4;
         const pct = Math.round((friendlyStep / 4) * 100);
 
         const totalAmt = Number(ord.totalAmount || 0);
         const paidAmt = Number(ord.depositPaid ?? totalAmt);
         const balanceDue = Math.max(0, totalAmt - paidAmt);
-        const canCancel = friendlyStep === 1 && !/Cancelled/i.test(ord.status);
+        const isCancelled = /Cancelled/i.test(String(ord.status || '')) || ord.sqlStatus === 'Cancelled';
+        const isCancelPending = Boolean(ord.cancellationRequested) && !isCancelled;
+        const canCancel = friendlyStep < 4 && !isCancelled && !isCancelPending && !isCompleted;
 
         return `
     <article class="bg-white rounded-3xl border border-[#BCE3FF] p-6 sm:p-7 shadow-2xs space-y-6">
@@ -3592,12 +3891,27 @@ function renderDashboardContent() {
     <img src="${esc(imgUrl)}" alt="${esc(ord.furnitureName)}" class="w-20 h-20 rounded-2xl object-cover border border-[#BCE3FF] shrink-0" />
     <div>
     <div class="flex flex-wrap items-center gap-2 text-xs">
-    <span class="font-semibold text-[#0077CC]">${esc(ord.status)}</span>
+    <span class="font-semibold ${isCancelled ? 'text-rose-700' : isCompleted ? 'text-emerald-700' : 'text-[#0077CC]'}">${esc(ord.status)}</span>
     <span aria-hidden="true">·</span>
     <span class="font-mono-tech text-[#64748B]">Order #${esc(ord.orderNumber)}</span>
                     ${
                       ord.itemType === 'Custom'
                         ? `<span class="px-2 py-0.5 rounded bg-[#EBF6FF] text-[#0077CC] font-mono-tech text-[11px] font-bold">Custom Commission</span>`
+                        : ''
+                    }
+                    ${
+                      isCompleted
+                        ? `<span class="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-bold">✓ Completed · In Completed Transactions</span>`
+                        : ''
+                    }
+                    ${
+                      isCancelPending
+                        ? `<span class="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[11px] font-bold">Cancellation Pending Admin Approval</span>`
+                        : ''
+                    }
+                    ${
+                      !isCancelPending && ord.cancellationStatus === 'Declined'
+                        ? `<span class="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300 text-[11px] font-semibold">Cancellation Declined by Admin</span>`
                         : ''
                     }
     </div>
@@ -3636,14 +3950,14 @@ function renderDashboardContent() {
     <div class="p-4 rounded-2xl bg-[#F8FBFF] border border-[#E2E8F0] space-y-3">
     <div class="flex items-center justify-between text-xs">
     <span class="font-semibold text-[#0D1015]">Workshop &amp; Delivery Progress</span>
-    <span class="font-mono-tech font-bold text-[#0095FF]">${pct}% Complete</span>
+    <span class="font-mono-tech font-bold ${isCancelled ? 'text-rose-600' : 'text-[#0095FF]'}">${isCancelled ? 'Order Cancelled' : `${pct}% Complete`}</span>
     </div>
     <div class="w-full h-2.5 rounded-full bg-[#E2E8F0] overflow-hidden">
-    <div class="h-full rounded-full bg-[#0095FF] transition-all" style="width: ${pct}%"></div>
+    <div class="h-full rounded-full ${isCancelled ? 'bg-rose-500' : 'bg-[#0095FF]'} transition-all" style="width: ${isCancelled ? 100 : pct}%"></div>
     </div>
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                 ${FRIENDLY_CUSTOMER_STEPS.map((label, idx) => {
-                  const active = idx + 1 <= friendlyStep;
+                  const active = !isCancelled && idx + 1 <= friendlyStep;
                   return `
     <div class="flex items-center gap-1.5 text-[11px] ${active ? 'text-[#0D1015] font-bold' : 'text-[#94A3B8]'}">
     <span class="w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
@@ -3659,19 +3973,30 @@ function renderDashboardContent() {
     </div>
 
     <div class="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs text-[#475569]">
-    <span>Delivery Address: <strong class="text-[#0D1015]">${esc(state.customerProfile.address)}, ${esc(state.customerProfile.city)}</strong></span>
+    <span>Delivery Address: <strong class="text-[#0D1015]">${esc([state.customerProfile.address, state.customerProfile.city].filter(Boolean).join(', ') || ord.deliveryAddress || 'Showroom Pickup')}</strong></span>
     <div class="flex flex-wrap items-center gap-2.5">
                 ${
-                  balanceDue > 0
+                  isCompleted
+                    ? `<button type="button" data-client-view-tx="${esc(ord.orderNumber)}" class="px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-semibold transition-colors cursor-pointer">
+                        View in Transaction Orders →
+                      </button>`
+                    : ''
+                }
+                ${
+                  balanceDue > 0 && !isCancelled
                     ? `<button type="button" data-client-pay-order="${esc(ord.orderNumber)}" class="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors cursor-pointer">
                         Pay Remaining Balance (${usd(balanceDue)})
     </button>`
                     : ''
                 }
                 ${
-                  canCancel
+                  isCancelPending
+                    ? `<span class="px-3 py-1.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold">
+                        Cancellation Sent · Waiting for Admin Approval
+                      </span>`
+                    : canCancel
                     ? `<button type="button" data-client-cancel-order="${esc(ord.orderNumber)}" class="px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold transition-colors cursor-pointer">
-                        Cancel Order
+                        Request Cancel Order
     </button>`
                     : ''
                 }
@@ -3684,6 +4009,13 @@ function renderDashboardContent() {
         `;
       })
       .join('');
+
+    friendlyOrdersEl.querySelectorAll('[data-client-view-tx]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const txTabBtn = document.querySelector('[data-client-tab="transactions"]');
+        if (txTabBtn) txTabBtn.click();
+      });
+    });
 
     friendlyOrdersEl.querySelectorAll('[data-client-pay-order]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -3709,49 +4041,58 @@ function renderDashboardContent() {
     friendlyOrdersEl.querySelectorAll('[data-client-cancel-order]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const orderNumber = btn.getAttribute('data-client-cancel-order') || '';
-        state.orders = state.orders.filter((o) => o.orderNumber !== orderNumber);
+        const res = requestOrderCancellation({
+          orders: state.orders,
+          orderNumber,
+        });
+        if (!res.ok) {
+          showClientBanner(res.errorMessage || 'Unable to request cancellation.');
+          return;
+        }
+        state.orders = res.updatedOrders;
         saveOrdersToStorage();
-        showClientBanner(`Order #${orderNumber} has been cancelled.`);
+        showClientBanner(
+          `Cancellation request for Order #${orderNumber} has been sent to the Admin for approval.`
+        );
         renderDashboardContent();
       });
     });
   }
 
-  // 2. Customer Transactions Ledger Table
+  // 2. Customer Completed Transactions Ledger Table (Reference, Order #, Completed Date, Product & Finish, Status, Amount)
   const txTbody = document.getElementById('client-transactions-tbody');
   const txTotalEl = document.getElementById('client-transactions-total');
   if (txTbody) {
-    const transactions = displayOrders.map((ord, idx) => {
-      const totalAmt = Number(ord.totalAmount || 0);
-      const paidAmt = Number(ord.depositPaid ?? totalAmt);
-      const isFull = paidAmt >= totalAmt;
-      return {
-        txId: `TXN-2026-99${41 - idx * 12}`,
-        date: ord.lastPaymentAt || (idx === 0 ? '2026-10-28' : '2026-10-14'),
-        orderNumber: ord.orderNumber,
-        piece: ord.furnitureName,
-        finish: ord.selectedFinish,
-        method: ord.paymentMethod || (idx === 0 ? 'Bank Transfer' : 'Card •••• 4820'),
-        status: isFull ? 'Paid in Full' : `50% Deposit`,
-        amount: paidAmt,
-      };
-    });
+    const transactions = completedTransactions;
     const totalVolume = transactions.reduce((sum, t) => sum + Number(t.amount || 0), 0);
     if (txTotalEl) txTotalEl.textContent = usd(totalVolume);
 
-    txTbody.innerHTML = transactions
+    txTbody.innerHTML =
+      transactions.length === 0
+        ? `
+    <tr>
+      <td colspan="6" class="py-8 text-center text-xs text-[#64748B]">
+        No completed transaction orders yet. Once the Admin marks your order as Complete, it will appear here automatically.
+      </td>
+    </tr>
+        `
+        : transactions
       .map(
         (tx) => `
-    <tr>
-    <td class="font-mono-tech text-xs font-bold text-[#0D1015] whitespace-nowrap">${esc(tx.txId)}</td>
-    <td class="font-mono-tech text-xs text-[#475569] whitespace-nowrap">${esc(tx.date)}</td>
-    <td class="admin-col-primary">
-    <p class="admin-table-title">${esc(tx.piece)}</p>
-    <p class="admin-table-sub">Order #${esc(tx.orderNumber)} · ${esc(tx.finish)}</p>
-    </td>
-    <td class="text-xs text-[#475569] whitespace-nowrap">${esc(tx.method)}</td>
-    <td class="text-xs font-semibold ${tx.status.includes('Full') ? 'text-emerald-700' : 'text-amber-700'} whitespace-nowrap">${esc(tx.status)}</td>
-    <td class="text-right font-mono-tech font-bold text-[#0D1015] whitespace-nowrap">${usd(tx.amount)}</td>
+    <tr data-testid="client-transaction-row-${esc(tx.orderNumber)}">
+      <td class="font-mono-tech text-xs font-bold text-[#0D1015] whitespace-nowrap">${esc(tx.txId)}</td>
+      <td class="font-mono-tech text-xs font-bold text-[#0095FF] whitespace-nowrap">#${esc(tx.orderNumber)}</td>
+      <td class="font-mono-tech text-xs text-[#475569] whitespace-nowrap">${esc(tx.date)}</td>
+      <td class="admin-col-primary">
+        <p class="admin-table-title">${esc(tx.piece)}</p>
+        <p class="admin-table-sub">${esc(tx.finish)} · ${esc(tx.dimensions || 'Standard Dimensions')}</p>
+      </td>
+      <td class="whitespace-nowrap">
+        <span class="admin-status-badge admin-status-in-stock">
+          <span class="admin-status-badge-dot"></span>${esc(tx.status || 'Completed')}
+        </span>
+      </td>
+      <td class="text-right font-mono-tech font-bold text-[#0D1015] whitespace-nowrap">${usd(tx.amount)}</td>
     </tr>
         `
       )
@@ -4551,7 +4892,7 @@ function renderDashboardContent() {
                                     : ''
                                 }
                               </div>
-                              <p class="admin-table-sub font-mono-tech">${esc(p.sku)} · ${esc(p.dimensions || 'Standard')}</p>
+                              <p class="admin-table-sub font-mono-tech">ProductID: ${esc(p.productId || p.sku)} · ${esc(p.dimensions || 'Standard')}</p>
                             </div>
                           </div>
                         </td>
@@ -4964,7 +5305,7 @@ function renderDashboardContent() {
                         <tr data-material-row="${esc(m.id)}">
                           <td class="admin-col-primary">
                             <p class="admin-table-title">${esc(m.name)}</p>
-                            <p class="admin-table-sub font-mono-tech">${esc(m.sku)}</p>
+                            <p class="admin-table-sub font-mono-tech">MaterialID: ${esc(m.materialId || m.sku || m.code)}</p>
                           </td>
                           <td class="whitespace-nowrap">
                             <span class="admin-category-tag">${esc(m.materialType)}</span>
@@ -5204,7 +5545,7 @@ function renderDashboardContent() {
                 activeMovementMode === 'Stock In'
                   ? `
                 <div>
-                  <label for="inv-move-cost" class="admin-label">Total Purchase Cost ($ USD, Optional)</label>
+                  <label for="inv-move-cost" class="admin-label">Total Purchase Cost (₱ PHP, Optional)</label>
                   <input
                     id="inv-move-cost"
                     type="number"
@@ -5376,7 +5717,7 @@ function renderDashboardContent() {
                   />
                 </div>
                 <div>
-                  <label for="mat-cost" class="admin-label">Unit Cost ($ USD)</label>
+                  <label for="mat-cost" class="admin-label">Unit Cost (₱ PHP)</label>
                   <input
                     id="mat-cost"
                     type="number"
@@ -6007,6 +6348,7 @@ function renderDashboardContent() {
                       <tr>
                         <td class="whitespace-nowrap">
                           <span class="vch-code-chip">${esc(v.code)}</span>
+                          <p class="admin-table-sub font-mono-tech mt-1">VoucherID: ${esc(v.voucherId || v.code || v.id)}</p>
                         </td>
                         <td>
                           <p class="admin-table-title">${esc(v.customerName || 'Showroom Client')}</p>
@@ -6178,30 +6520,37 @@ function renderDashboardContent() {
     const stageFilter = state.adminOrderStage || 'all';
     const hasActiveOrdFilters = Boolean(ordQuery) || stageFilter !== 'all';
 
-    const confirmedCount = state.orders.filter((o) => /Confirmed|Inquiry|Timber/i.test(o.status)).length;
-    const inProdCount = state.orders.filter((o) => /Joinery|Finishing|Millwork|Quality/i.test(o.status)).length;
-    const deliveredCount = state.orders.filter((o) => /Dispatched|Delivered/i.test(o.status)).length;
+    const { activeOrders, completedOrders } = partitionOrdersByCompletion(state.orders);
+    const inProdCount = activeOrders.filter((o) => /Joinery|Finishing|Millwork|Quality/i.test(o.status)).length;
 
-    const filteredOrders = state.orders.filter((o) => {
-      const matchesQuery =
-        !ordQuery ||
-        o.orderNumber.toLowerCase().includes(ordQuery) ||
-        o.clientName.toLowerCase().includes(ordQuery) ||
-        o.clientEmail.toLowerCase().includes(ordQuery) ||
-        o.furnitureName.toLowerCase().includes(ordQuery) ||
-        (o.materialName || '').toLowerCase().includes(ordQuery);
+    const matchesOrderQuery = (o) =>
+      !ordQuery ||
+      o.orderNumber.toLowerCase().includes(ordQuery) ||
+      o.clientName.toLowerCase().includes(ordQuery) ||
+      o.clientEmail.toLowerCase().includes(ordQuery) ||
+      o.furnitureName.toLowerCase().includes(ordQuery) ||
+      (o.materialName || '').toLowerCase().includes(ordQuery);
 
-      let matchesStage = true;
-      if (stageFilter === 'confirmed') matchesStage = /Confirmed|Inquiry|Timber/i.test(o.status);
-      if (stageFilter === 'production') matchesStage = /Joinery|Finishing|Millwork/i.test(o.status);
-      if (stageFilter === 'quality') matchesStage = /Quality/i.test(o.status);
-      if (stageFilter === 'delivered') matchesStage = /Dispatched|Delivered/i.test(o.status);
+    const filteredActiveOrders = activeOrders.filter((o) => {
+      if (!matchesOrderQuery(o)) return false;
+      if (stageFilter === 'completed') return false;
+      if (stageFilter === 'confirmed') return /Confirmed|Inquiry|Timber/i.test(o.status);
+      if (stageFilter === 'production') return /Joinery|Finishing|Millwork/i.test(o.status);
+      if (stageFilter === 'quality') return /Quality/i.test(o.status);
+      if (stageFilter === 'delivered') return /Dispatched/i.test(o.status);
+      return true;
+    });
 
-      return matchesQuery && matchesStage;
+    const filteredCompletedOrders = completedOrders.filter((o) => {
+      if (!matchesOrderQuery(o)) return false;
+      if (stageFilter !== 'all' && stageFilter !== 'completed' && stageFilter !== 'delivered') {
+        return false;
+      }
+      return true;
     });
 
     adminOrdersEl.innerHTML = `
-      <div class="space-y-5">
+      <div class="space-y-6">
         <div class="admin-summary-grid-4">
           <div class="admin-summary-card">
             <span class="admin-summary-label">Total Orders</span>
@@ -6209,9 +6558,9 @@ function renderDashboardContent() {
             <span class="admin-summary-sub">All client commissions</span>
           </div>
           <div class="admin-summary-card">
-            <span class="admin-summary-label">Confirmed &amp; Prep</span>
-            <span class="admin-summary-value is-blue">${confirmedCount}</span>
-            <span class="admin-summary-sub">Timber selection</span>
+            <span class="admin-summary-label">Active Orders</span>
+            <span id="admin-orders-active-count" class="admin-summary-value is-blue">${activeOrders.length}</span>
+            <span class="admin-summary-sub">In queue, workshop, or transit</span>
           </div>
           <div class="admin-summary-card">
             <span class="admin-summary-label">In Production</span>
@@ -6219,13 +6568,24 @@ function renderDashboardContent() {
             <span class="admin-summary-sub">Joinery &amp; finishing</span>
           </div>
           <div class="admin-summary-card">
-            <span class="admin-summary-label">Dispatched / Delivered</span>
-            <span class="admin-summary-value is-green">${deliveredCount}</span>
-            <span class="admin-summary-sub">Completed fulfillment</span>
+            <span class="admin-summary-label">Completed Orders</span>
+            <span id="admin-orders-completed-count" class="admin-summary-value is-green">${completedOrders.length}</span>
+            <span class="admin-summary-sub">Added to customer transactions</span>
           </div>
         </div>
 
-        <div class="admin-card overflow-hidden">
+        <!-- Active Orders Section -->
+        <div id="admin-active-orders-section" data-testid="admin-active-orders-section" class="admin-card overflow-hidden">
+          <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-bold text-slate-900">Active Orders (${filteredActiveOrders.length})</h3>
+              <p class="text-xs text-slate-500">Select the workshop stage in Order Stage (including "Delivered · Completed") to update progress or move the order to Completed Orders and the customer's Transactions.</p>
+            </div>
+            <span class="px-2.5 py-1 rounded-full bg-sky-50 text-[#0077CC] border border-sky-200 font-mono-tech text-xs font-bold">
+              ${activeOrders.length} Active
+            </span>
+          </div>
+
           <div class="admin-toolbar">
             <div class="admin-toolbar-filters">
               <input
@@ -6241,7 +6601,8 @@ function renderDashboardContent() {
                 <option value="confirmed" ${stageFilter === 'confirmed' ? 'selected' : ''}>Confirmed &amp; Timber Prep</option>
                 <option value="production" ${stageFilter === 'production' ? 'selected' : ''}>In Production &amp; Finishing</option>
                 <option value="quality" ${stageFilter === 'quality' ? 'selected' : ''}>Quality Check</option>
-                <option value="delivered" ${stageFilter === 'delivered' ? 'selected' : ''}>Dispatched / Delivered</option>
+                <option value="delivered" ${stageFilter === 'delivered' ? 'selected' : ''}>Dispatched / In Transit</option>
+                <option value="completed" ${stageFilter === 'completed' ? 'selected' : ''}>Completed Orders (${completedOrders.length})</option>
               </select>
               <button
                 type="button"
@@ -6251,44 +6612,55 @@ function renderDashboardContent() {
                 Reset Filters
               </button>
             </div>
-            <span class="text-xs font-medium text-slate-500">Showing ${filteredOrders.length} of ${state.orders.length} orders</span>
+            <span class="text-xs font-medium text-slate-500">Showing ${filteredActiveOrders.length} active · ${filteredCompletedOrders.length} completed</span>
           </div>
 
           ${
-            filteredOrders.length === 0
+            filteredActiveOrders.length === 0
               ? `
             <div class="admin-empty-state space-y-3">
-              <p class="text-base font-bold text-slate-900">No orders match your filter</p>
-              <p class="text-xs text-slate-500 max-w-sm mx-auto">Try searching for a different customer name or resetting the stage filter.</p>
-              <div>
+              <p class="text-base font-bold text-slate-900">${
+                stageFilter === 'completed'
+                  ? 'Viewing Completed Orders below'
+                  : 'No active orders match your filter'
+              }</p>
+              <p class="text-xs text-slate-500 max-w-sm mx-auto">${
+                stageFilter === 'completed'
+                  ? 'See the Completed Orders section below for all fulfilled customer orders.'
+                  : 'All matching orders may have been completed and moved to the Completed Orders section below.'
+              }</p>
+              ${
+                hasActiveOrdFilters
+                  ? `<div>
                 <button type="button" id="admin-reset-order-filters-empty" class="admin-btn admin-btn-sm admin-btn-secondary">
                   Reset Filters
                 </button>
-              </div>
+              </div>`
+                  : ''
+              }
             </div>
           `
               : `
             <div class="overflow-x-auto">
-              <table class="admin-table">
+              <table class="admin-table" data-testid="admin-active-orders-table">
                 <thead>
                   <tr>
                     <th>Order #</th>
                     <th>Customer</th>
                     <th class="admin-col-primary">Product &amp; Finish</th>
                     <th>Order Stage</th>
-                    <th>Payment Status</th>
                     <th class="text-right">Total Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${filteredOrders
+                  ${filteredActiveOrders
                     .map((o) => {
                       const realIdx = state.orders.findIndex((item) => item.orderNumber === o.orderNumber);
                       const totalAmt = Number(o.totalAmount || 0);
-                      const paidAmt = Number(o.depositPaid ?? totalAmt);
-                      const balanceDue = Math.max(0, totalAmt - paidAmt);
+                      const isCancelled = /Cancelled/i.test(String(o.status || '')) || o.sqlStatus === 'Cancelled';
+                      const explicitOrderId = o.orderId || o.orderNumber || o.id;
                       return `
-                        <tr>
+                        <tr data-testid="admin-active-order-row-${esc(o.orderNumber)}">
                           <td class="whitespace-nowrap">
                             <div class="flex items-center gap-1.5">
                               <p class="font-mono-tech text-xs font-bold text-[#0095FF]">#${esc(o.orderNumber)}</p>
@@ -6298,7 +6670,7 @@ function renderDashboardContent() {
                                   : ''
                               }
                             </div>
-                            <p class="admin-table-sub mt-0.5">${esc(o.orderDate || '2026-10-28')}</p>
+                            <p class="admin-table-sub font-mono-tech mt-0.5">OrderID: ${esc(explicitOrderId)} · ${esc(o.orderDate || '2026-10-28')}</p>
                           </td>
                           <td class="whitespace-nowrap">
                             <p class="admin-table-title">${esc(o.clientName)}</p>
@@ -6328,19 +6700,130 @@ function renderDashboardContent() {
                                   : ''
                               }
                             </select>
-                          </td>
-                          <td class="whitespace-nowrap">
-                            <span class="admin-status-badge ${balanceDue > 0 ? 'admin-status-low-stock' : 'admin-status-in-stock'}">
-                              <span class="admin-status-badge-dot"></span>${balanceDue > 0 ? '50% Deposit Paid' : 'Paid in Full'}
-                            </span>
+                            ${
+                              o.cancellationRequested
+                                ? `
+                              <div class="mt-2 p-2.5 rounded-xl bg-amber-50 border border-amber-300 space-y-2">
+                                <p class="text-[11px] font-bold text-amber-900">
+                                  ⚠ Customer Requested Cancellation
+                                </p>
+                                <div class="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    data-admin-approve-cancel="${esc(o.orderNumber)}"
+                                    class="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-semibold cursor-pointer"
+                                  >
+                                    Approve Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    data-admin-decline-cancel="${esc(o.orderNumber)}"
+                                    class="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-[11px] font-semibold cursor-pointer"
+                                  >
+                                    Decline
+                                  </button>
+                                </div>
+                              </div>
+                            `
+                                : o.cancellationStatus === 'Approved' || isCancelled
+                                ? `<p class="mt-1 text-[11px] font-bold text-rose-600">Cancelled (Approved by Admin)</p>`
+                                : ''
+                            }
                           </td>
                           <td class="text-right whitespace-nowrap">
                             <p class="font-mono-tech text-sm font-bold text-slate-900">${usd(totalAmt)}</p>
-                            ${
-                              balanceDue > 0
-                                ? `<p class="text-[11px] text-slate-500 font-mono-tech">Bal: ${usd(balanceDue)}</p>`
-                                : ''
-                            }
+                          </td>
+                        </tr>
+                      `;
+                    })
+                    .join('')}
+                </tbody>
+              </table>
+            </div>
+          `
+          }
+        </div>
+
+        <!-- Completed Orders Section -->
+        <div id="admin-completed-orders-section" data-testid="admin-completed-orders-section" class="admin-card overflow-hidden">
+          <div class="px-6 py-4 border-b border-slate-200 bg-emerald-50/60 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="text-sm font-bold text-slate-900">Completed Orders (${filteredCompletedOrders.length})</h3>
+                <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 font-mono-tech text-[11px] font-bold">
+                  Synced with Customer Transactions
+                </span>
+              </div>
+              <p class="text-xs text-slate-600 mt-0.5">
+                Orders set to "Delivered · Completed" in Order Stage appear in this section and are automatically added to the customer's Transaction Orders ledger.
+              </p>
+            </div>
+            <span id="admin-completed-section-badge" class="px-2.5 py-1 rounded-full bg-emerald-600 text-white font-mono-tech text-xs font-bold">
+              ${completedOrders.length} Completed
+            </span>
+          </div>
+
+          ${
+            filteredCompletedOrders.length === 0
+              ? `
+            <div class="admin-empty-state space-y-2 py-8">
+              <p class="text-sm font-bold text-slate-900">No completed orders yet</p>
+              <p class="text-xs text-slate-500 max-w-md mx-auto">
+                Select "Delivered · Completed" in the Order Stage dropdown on any active order above to move it here and add it to the customer's Transaction Orders.
+              </p>
+            </div>
+          `
+              : `
+            <div class="overflow-x-auto">
+              <table class="admin-table" data-testid="admin-completed-orders-table">
+                <thead>
+                  <tr>
+                    <th>Order #</th>
+                    <th>Transaction Ref</th>
+                    <th>Customer</th>
+                    <th class="admin-col-primary">Product &amp; Finish</th>
+                    <th>Completed Date</th>
+                    <th>Status</th>
+                    <th class="text-right">Total Amount</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-completed-orders-tbody">
+                  ${filteredCompletedOrders
+                    .map((o) => {
+                      const totalAmt = Number(o.totalAmount || 0);
+                      const ordDigits = String(o.orderNumber || '').split('-').pop() || '0000';
+                      const explicitOrderId = o.orderId || o.orderNumber || ordDigits;
+                      const txRef = o.transactionReference || `TXN-2026-${ordDigits}`;
+                      const completedDate = o.completedAt || o.orderDate || '2026-10-28';
+                      return `
+                        <tr data-testid="admin-completed-order-row-${esc(o.orderNumber)}">
+                          <td class="whitespace-nowrap">
+                            <p class="font-mono-tech text-xs font-bold text-[#0095FF]">#${esc(o.orderNumber)}</p>
+                            <p class="admin-table-sub font-mono-tech mt-0.5">OrderID: ${esc(explicitOrderId)}</p>
+                          </td>
+                          <td class="whitespace-nowrap">
+                            <span class="font-mono-tech text-xs font-bold text-slate-900">${esc(txRef)}</span>
+                          </td>
+                          <td class="whitespace-nowrap">
+                            <p class="admin-table-title">${esc(o.clientName)}</p>
+                            <p class="admin-table-sub">${esc(o.clientEmail)}</p>
+                          </td>
+                          <td class="admin-col-primary">
+                            <p class="admin-table-title">${esc(o.furnitureName)}</p>
+                            <p class="admin-table-sub mt-0.5">
+                              ${esc(o.selectedFinish)} · ${esc(o.materialName || 'FAS Hardwood')}
+                            </p>
+                          </td>
+                          <td class="whitespace-nowrap">
+                            <span class="font-mono-tech text-xs text-slate-600">${esc(completedDate)}</span>
+                          </td>
+                          <td class="whitespace-nowrap">
+                            <span class="admin-status-badge admin-status-in-stock">
+                              <span class="admin-status-badge-dot"></span>Completed · In Customer Transactions
+                            </span>
+                          </td>
+                          <td class="text-right whitespace-nowrap">
+                            <p class="font-mono-tech text-sm font-bold text-emerald-700">${usd(totalAmt)}</p>
                           </td>
                         </tr>
                       `;
@@ -6376,15 +6859,55 @@ function renderDashboardContent() {
       }
     });
 
+    const handleCompleteOrderWithConfirm = (ord, onCancelCallback) => {
+      const applyCompletion = () => {
+        const res = applyAdminOrderUpdate({
+          orders: state.orders,
+          orderNumber: ord.orderNumber,
+          updates: { status: 'Delivered · Completed' },
+        });
+        if (res.ok) {
+          state.orders = res.updatedOrders;
+          saveOrdersToStorage();
+          showAdminBanner(
+            `Order #${ord.orderNumber} moved to Completed Orders and added to ${ord.clientName}'s Transaction Orders.`
+          );
+          renderDashboardContent();
+        }
+      };
+
+      openAdminConfirmModal({
+        title: `Complete Order #${ord.orderNumber}?`,
+        message: `Are you sure you want to mark Order #${ord.orderNumber} (${ord.furnitureName}) for ${ord.clientName} as Completed? It will be moved to the Completed Orders section and added to ${ord.clientName}'s Transaction Orders.`,
+        confirmLabel: 'Yes, Complete Order',
+        confirmVariant: 'primary',
+        onConfirm: applyCompletion,
+        onCancel: () => {
+          if (typeof onCancelCallback === 'function') onCancelCallback();
+          renderDashboardContent();
+        },
+      });
+    };
+
     adminOrdersEl.querySelectorAll('[data-admin-order-idx]').forEach((sel) => {
       sel.addEventListener('change', (e) => {
         const idx = Number(sel.getAttribute('data-admin-order-idx'));
         const ord = state.orders[idx];
         if (!ord) return;
+        const nextStatus = e.target.value;
+        const isCompleting = /Completed|Delivered/i.test(nextStatus);
+
+        if (isCompleting) {
+          handleCompleteOrderWithConfirm(ord, () => {
+            sel.value = ord.status;
+          });
+          return;
+        }
+
         const res = applyAdminOrderUpdate({
           orders: state.orders,
           orderNumber: ord.orderNumber,
-          updates: { status: e.target.value },
+          updates: { status: nextStatus },
         });
         if (res.ok) {
           state.orders = res.updatedOrders;
@@ -6392,6 +6915,40 @@ function renderDashboardContent() {
           showAdminBanner(
             `Updated Order #${ord.orderNumber} stage to "${res.updatedOrder.status}" — synced to Customer Dashboard.`
           );
+          renderDashboardContent();
+        }
+      });
+    });
+
+    adminOrdersEl.querySelectorAll('[data-admin-approve-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const orderNumber = btn.getAttribute('data-admin-approve-cancel') || '';
+        const res = resolveOrderCancellationRequest({
+          orders: state.orders,
+          orderNumber,
+          decision: 'approve',
+        });
+        if (res.ok) {
+          state.orders = res.updatedOrders;
+          saveOrdersToStorage();
+          showAdminBanner(`Approved cancellation for Order #${orderNumber}. The order is now marked as Cancelled.`);
+          renderDashboardContent();
+        }
+      });
+    });
+
+    adminOrdersEl.querySelectorAll('[data-admin-decline-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const orderNumber = btn.getAttribute('data-admin-decline-cancel') || '';
+        const res = resolveOrderCancellationRequest({
+          orders: state.orders,
+          orderNumber,
+          decision: 'decline',
+        });
+        if (res.ok) {
+          state.orders = res.updatedOrders;
+          saveOrdersToStorage();
+          showAdminBanner(`Declined cancellation request for Order #${orderNumber}. The order remains active.`);
           renderDashboardContent();
         }
       });
@@ -6486,12 +7043,24 @@ function renderDashboardContent() {
                 </thead>
                 <tbody>
                   ${filteredCustomers
-                    .map(
-                      (c) => `
+                    .map((c) => {
+                      const custAvatar = resolveCustomerAvatarState(c);
+                      return `
                       <tr>
                         <td class="admin-col-primary">
-                          <p class="admin-table-title">${esc(c.name)}</p>
-                          <p class="admin-table-sub">Last order: ${esc(c.lastOrderDate)}</p>
+                          <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-xl bg-[#0B0F17] text-[#BCE3FF] font-serif-display text-xs font-bold flex items-center justify-center shrink-0 overflow-hidden">
+                              ${
+                                custAvatar.hasAvatar
+                                  ? `<img src="${esc(custAvatar.avatarSrc)}" alt="${esc(c.name)}" class="w-full h-full object-cover" />`
+                                  : `<span>${esc(custAvatar.initials)}</span>`
+                              }
+                            </div>
+                            <div>
+                              <p class="admin-table-title">${esc(c.name)}</p>
+                              <p class="admin-table-sub font-mono-tech">CustomerID: ${esc(c.customerId || c.id)} · Last order: ${esc(c.lastOrderDate)}</p>
+                            </div>
+                          </div>
                         </td>
                         <td class="text-xs text-slate-600 whitespace-nowrap">${esc(c.email)}</td>
                         <td class="font-mono-tech text-xs text-slate-600 whitespace-nowrap">${esc(c.phone)}</td>
@@ -6514,8 +7083,8 @@ function renderDashboardContent() {
                           </button>
                         </td>
                       </tr>
-                    `
-                    )
+                    `;
+                    })
                     .join('')}
                 </tbody>
               </table>
@@ -6546,6 +7115,1451 @@ function renderDashboardContent() {
         }
         renderDashboardContent();
       });
+    });
+  }
+
+  // 10. Admin Monthly Analytics & Business Reports (#admin-tab-analytics)
+  renderAdminAnalyticsSection();
+}
+
+function renderDeltaBadge(metric, invertColors = false) {
+  if (!metric) return '';
+  const dir = metric.direction || 'flat';
+  const label = metric.formattedChange || '0.0%';
+  let toneClass = 'is-flat';
+  let arrow = '→';
+  if (dir === 'up') {
+    toneClass = invertColors ? 'is-down' : 'is-up';
+    arrow = '↑';
+  } else if (dir === 'down') {
+    toneClass = invertColors ? 'is-up' : 'is-down';
+    arrow = '↓';
+  }
+  return `<span class="analytics-delta-tag ${toneClass}" title="Compared to previous equivalent period">${arrow} ${esc(label)}</span>`;
+}
+
+function renderAdminAnalyticsSection() {
+  const analyticsEl = document.getElementById('admin-tab-analytics');
+  if (!analyticsEl) return;
+
+  // Enforce Admin-Only Access Check
+  const isAdminSession =
+    !state.sessionUser || String(state.sessionUser.role || 'admin').toLowerCase() === 'admin';
+  if (!isAdminSession) {
+    analyticsEl.innerHTML = `
+      <div class="admin-card p-8 text-center space-y-2">
+        <p class="text-base font-bold text-rose-700">Administrator Access Required</p>
+        <p class="text-xs text-slate-500">Monthly Analytics &amp; Business Reports are restricted to authorized showroom administrators.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const nowMs = Date.now();
+  const defaultManilaRange = resolveAnalyticsDateRange({ preset: 'this_month' }, nowMs);
+  const selectedYear = Number(state.adminAnalyticsYear) || defaultManilaRange.current.year;
+  const selectedMonth = Number(state.adminAnalyticsMonth) || defaultManilaRange.current.month;
+  const startDateVal = state.adminAnalyticsStartDate || defaultManilaRange.current.startDate;
+  const endDateVal = state.adminAnalyticsEndDate || defaultManilaRange.current.endDate;
+
+  const filterInput = {
+    preset: state.adminAnalyticsPreset || 'this_month',
+    year: selectedYear,
+    month: selectedMonth,
+    startDate: startDateVal,
+    endDate: endDateVal,
+  };
+
+  const report = computeMonthlyAnalyticsReport({
+    catalog: state.catalog,
+    categories: state.categories,
+    orders: state.orders,
+    customers: state.customers,
+    customerProfile: state.customerProfile,
+    materials: state.materials,
+    inventoryTransactions: state.inventoryTransactions,
+    vouchers: state.vouchers,
+    filterInput,
+    nowMs,
+  });
+
+  const s = report.summary;
+  const sales = report.salesAnalytics;
+  const bestSellers = report.bestSellingProducts;
+  const ordAnalytics = report.orderAnalytics;
+  const custAnalytics = report.customerAnalytics;
+  const invAnalytics = report.inventoryAnalytics;
+  const vchAnalytics = report.voucherAnalytics;
+
+  const monthNames = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  const availableYears = [2024, 2025, 2026, 2027];
+
+  // Build SVG Daily Revenue Chart
+  const dailySeries = sales.dailySeries || [];
+  const maxDailyRev = Math.max(1, ...dailySeries.map((d) => Number(d.revenue || 0)));
+  const maxDailyOrders = Math.max(1, ...dailySeries.map((d) => Number(d.orders || 0)));
+
+  const buildDailyRevenueSvg = () => {
+    if (dailySeries.length === 0) {
+      return `<p class="text-xs text-slate-400 py-8 text-center">No daily data in selected range.</p>`;
+    }
+    const svgW = 680;
+    const svgH = 210;
+    const padL = 52;
+    const padR = 16;
+    const padT = 18;
+    const padB = 34;
+    const plotW = svgW - padL - padR;
+    const plotH = svgH - padT - padB;
+    const stepX = dailySeries.length > 1 ? plotW / (dailySeries.length - 1) : plotW;
+    const barW = Math.max(6, Math.min(20, Math.floor(plotW / Math.max(1, dailySeries.length)) - 4));
+
+    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((pct) => {
+      const y = Math.round(padT + plotH * (1 - pct));
+      const val = Math.round(maxDailyRev * pct);
+      return `
+        <line x1="${padL}" y1="${y}" x2="${svgW - padR}" y2="${y}" stroke="#E2E8F0" stroke-dasharray="3 3" />
+        <text x="${padL - 6}" y="${y + 4}" text-anchor="end" fill="#64748B" font-size="10" font-family="monospace">₱${val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val}</text>
+      `;
+    });
+
+    const points = dailySeries.map((d, idx) => {
+      const x =
+        dailySeries.length === 1
+          ? padL + plotW / 2
+          : Math.round(padL + idx * stepX);
+      const y = Math.round(padT + plotH * (1 - Number(d.revenue || 0) / maxDailyRev));
+      return { x, y, d, idx };
+    });
+
+    const polylinePoints = points.map((p) => `${p.x},${p.y}`).join(' ');
+    const areaPoints =
+      points.length > 1
+        ? `${points[0].x},${padT + plotH} ${polylinePoints} ${points[points.length - 1].x},${padT + plotH}`
+        : '';
+
+    const labelStep = Math.max(1, Math.ceil(dailySeries.length / 8));
+
+    return `
+      <svg viewBox="0 0 ${svgW} ${svgH}" class="w-full h-52 overflow-visible" role="img" aria-label="Daily revenue chart for ${esc(report.period.label)}">
+        <defs>
+          <linearGradient id="analyticsRevGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#0095FF" stop-opacity="0.26" />
+            <stop offset="100%" stop-color="#0095FF" stop-opacity="0.02" />
+          </linearGradient>
+        </defs>
+        ${gridLines.join('')}
+        ${areaPoints ? `<polygon points="${areaPoints}" fill="url(#analyticsRevGrad)" />` : ''}
+        ${points
+          .map((p) => {
+            const h = Math.max(2, padT + plotH - p.y);
+            const hasRev = Number(p.d.revenue || 0) > 0;
+            return `<rect x="${p.x - barW / 2}" y="${p.y}" width="${barW}" height="${h}" rx="3" fill="${hasRev ? '#0095FF' : '#E2E8F0'}" opacity="${hasRev ? '0.85' : '0.45'}">
+              <title>${esc(p.d.label)} (${esc(p.d.date)}): ${usd(p.d.revenue)} · ${p.d.orders} order(s)</title>
+            </rect>`;
+          })
+          .join('')}
+        ${points.length > 1 ? `<polyline fill="none" stroke="#0077CC" stroke-width="2" points="${polylinePoints}" />` : ''}
+        ${points
+          .map((p) => {
+            const showLabel =
+              p.idx === 0 ||
+              p.idx === points.length - 1 ||
+              p.idx % labelStep === 0 ||
+              Number(p.d.revenue || 0) > 0;
+            return `
+              ${
+                Number(p.d.revenue || 0) > 0
+                  ? `<circle cx="${p.x}" cy="${p.y}" r="3.5" fill="#0B0F17" stroke="#FFFFFF" stroke-width="1.5">
+                      <title>${esc(p.d.label)}: ${usd(p.d.revenue)}</title>
+                    </circle>`
+                  : ''
+              }
+              ${
+                showLabel
+                  ? `<text x="${p.x}" y="${svgH - 10}" text-anchor="middle" fill="#64748B" font-size="9.5" font-family="monospace">${esc(p.d.dayLabel)}</text>`
+                  : ''
+              }
+            `;
+          })
+          .join('')}
+      </svg>
+    `;
+  };
+
+  const buildDailyOrdersSvg = () => {
+    if (dailySeries.length === 0) {
+      return `<p class="text-xs text-slate-400 py-8 text-center">No daily order data in selected range.</p>`;
+    }
+    const svgW = 680;
+    const svgH = 210;
+    const padL = 38;
+    const padR = 16;
+    const padT = 18;
+    const padB = 34;
+    const plotW = svgW - padL - padR;
+    const plotH = svgH - padT - padB;
+    const stepX = dailySeries.length > 1 ? plotW / (dailySeries.length - 1) : plotW;
+    const barW = Math.max(6, Math.min(22, Math.floor(plotW / Math.max(1, dailySeries.length)) - 4));
+    const maxY = Math.max(3, maxDailyOrders);
+    const labelStep = Math.max(1, Math.ceil(dailySeries.length / 8));
+
+    const gridLines = [0, 0.5, 1].map((pct) => {
+      const y = Math.round(padT + plotH * (1 - pct));
+      const val = Math.round(maxY * pct);
+      return `
+        <line x1="${padL}" y1="${y}" x2="${svgW - padR}" y2="${y}" stroke="#E2E8F0" stroke-dasharray="3 3" />
+        <text x="${padL - 6}" y="${y + 4}" text-anchor="end" fill="#64748B" font-size="10" font-family="monospace">${val}</text>
+      `;
+    });
+
+    return `
+      <svg viewBox="0 0 ${svgW} ${svgH}" class="w-full h-52 overflow-visible" role="img" aria-label="Orders per day chart for ${esc(report.period.label)}">
+        ${gridLines.join('')}
+        ${dailySeries
+          .map((d, idx) => {
+            const x =
+              dailySeries.length === 1
+                ? padL + plotW / 2
+                : Math.round(padL + idx * stepX);
+            const ordCount = Number(d.orders || 0);
+            const y = Math.round(padT + plotH * (1 - ordCount / maxY));
+            const h = Math.max(3, padT + plotH - y);
+            const showLabel =
+              idx === 0 ||
+              idx === dailySeries.length - 1 ||
+              idx % labelStep === 0 ||
+              ordCount > 0;
+            return `
+              <rect x="${x - barW / 2}" y="${y}" width="${barW}" height="${h}" rx="3.5" fill="${ordCount > 0 ? '#10B981' : '#E2E8F0'}" opacity="${ordCount > 0 ? '0.9' : '0.45'}">
+                <title>${esc(d.label)}: ${ordCount} order(s) · ${d.completedOrders || 0} completed</title>
+              </rect>
+              ${
+                ordCount > 0
+                  ? `<text x="${x}" y="${y - 5}" text-anchor="middle" fill="#047857" font-size="10" font-weight="700" font-family="monospace">${ordCount}</text>`
+                  : ''
+              }
+              ${
+                showLabel
+                  ? `<text x="${x}" y="${svgH - 10}" text-anchor="middle" fill="#64748B" font-size="9.5" font-family="monospace">${esc(d.dayLabel)}</text>`
+                  : ''
+              }
+            `;
+          })
+          .join('')}
+      </svg>
+    `;
+  };
+
+  // Monthly Revenue Throughout Selected Year Chart
+  const monthlyComparison = sales.monthlyComparison || [];
+  const maxMonthRev = Math.max(1, ...monthlyComparison.map((m) => Number(m.revenue || 0)));
+
+  const perfTone =
+    sales.performanceDirection === 'improving'
+      ? {
+          bg: 'bg-emerald-50 border-emerald-200 text-emerald-900',
+          badge: 'bg-emerald-600 text-white',
+          label: 'Improving Performance',
+        }
+      : sales.performanceDirection === 'declining'
+      ? {
+          bg: 'bg-amber-50 border-amber-200 text-amber-900',
+          badge: 'bg-amber-600 text-white',
+          label: 'Declining vs Previous Period',
+        }
+      : {
+          bg: 'bg-sky-50 border-sky-200 text-slate-900',
+          badge: 'bg-[#0095FF] text-white',
+          label: 'Stable Performance',
+        };
+
+  analyticsEl.innerHTML = `
+    <div class="space-y-6" data-testid="admin-analytics-module">
+      <!-- Printable & Executive Report Banner -->
+      <div class="admin-card p-5 sm:p-6 bg-gradient-to-r from-[#0B0F17] via-[#111827] to-[#1E293B] text-white border-slate-800">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div class="space-y-1.5">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="px-2.5 py-0.5 rounded-md bg-[#0095FF]/20 border border-[#0095FF]/40 font-mono-tech text-[11px] font-bold text-[#BCE3FF] uppercase tracking-wider">
+                Lillia &amp; Rowena Furniture · Business Intelligence
+              </span>
+              <span class="px-2.5 py-0.5 rounded-md bg-white/10 font-mono-tech text-[11px] text-slate-300">
+                Generated ${esc(report.generatedAtManila)}
+              </span>
+            </div>
+            <h2 class="font-serif-display text-xl sm:text-2xl font-bold text-white">
+              Monthly Analytics &amp; Business Report — <span id="analytics-active-period-label" class="text-[#BCE3FF]">${esc(report.period.label)}</span>
+            </h2>
+            <p class="text-xs text-slate-300">
+              Reporting Window: <strong class="font-mono-tech text-white">${esc(report.period.startDate)}</strong> to <strong class="font-mono-tech text-white">${esc(report.period.endDate)}</strong> (${report.period.dayCount} days) · Compared against <strong class="font-mono-tech text-[#BCE3FF]">${esc(report.previousPeriod.label)}</strong> (${esc(report.previousPeriod.startDate)} to ${esc(report.previousPeriod.endDate)})
+            </p>
+          </div>
+
+          <!-- Report Export Actions (PDF / CSV / Print) -->
+          <div class="analytics-no-print flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              id="analytics-export-pdf-btn"
+              data-testid="analytics-export-pdf-btn"
+              class="px-3.5 py-2 rounded-xl bg-[#0095FF] hover:bg-[#0077CC] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M6 20h12a2 2 0 002-2V8l-6-6H6a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+              <span>Download PDF Report</span>
+            </button>
+            <button
+              type="button"
+              id="analytics-export-csv-btn"
+              data-testid="analytics-export-csv-btn"
+              class="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span>Export CSV</span>
+            </button>
+            <button
+              type="button"
+              id="analytics-print-report-btn"
+              data-testid="analytics-print-report-btn"
+              class="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+              <span>Printable Report</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Monthly Date Filtering Toolbar -->
+      <div class="admin-card p-4 sm:p-5 analytics-no-print space-y-4">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div>
+            <span class="block text-[11px] font-bold uppercase tracking-wider text-slate-400">Monthly Date Filtering</span>
+            <p class="text-xs text-slate-600 mt-0.5">Filter all summary cards, revenue charts, best-sellers, customer retention, inventory movements, and voucher metrics by period.</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Analytics period filter presets">
+            <button
+              type="button"
+              data-analytics-preset="this_month"
+              class="analytics-preset-btn ${filterInput.preset === 'this_month' ? 'is-active' : ''}"
+            >
+              This Month
+            </button>
+            <button
+              type="button"
+              data-analytics-preset="last_month"
+              class="analytics-preset-btn ${filterInput.preset === 'last_month' ? 'is-active' : ''}"
+            >
+              Last Month
+            </button>
+            <button
+              type="button"
+              data-analytics-preset="select_month"
+              class="analytics-preset-btn ${filterInput.preset === 'select_month' ? 'is-active' : ''}"
+            >
+              Select Month &amp; Year
+            </button>
+            <button
+              type="button"
+              data-analytics-preset="this_year"
+              class="analytics-preset-btn ${filterInput.preset === 'this_year' ? 'is-active' : ''}"
+            >
+              This Year
+            </button>
+            <button
+              type="button"
+              data-analytics-preset="custom_range"
+              class="analytics-preset-btn ${filterInput.preset === 'custom_range' ? 'is-active' : ''}"
+            >
+              Custom Date Range
+            </button>
+          </div>
+        </div>
+
+        <!-- Secondary Controls for Select Month & Year / This Year / Custom Date Range -->
+        <div class="pt-3 border-t border-slate-100 flex flex-wrap items-end justify-between gap-4">
+          <div class="flex flex-wrap items-end gap-3">
+            ${
+              filterInput.preset === 'select_month'
+                ? `
+              <div>
+                <label for="analytics-select-month" class="admin-label">Month</label>
+                <select id="analytics-select-month" class="admin-select min-w-[150px]">
+                  ${monthNames
+                    .map(
+                      (mName, idx) =>
+                        `<option value="${idx + 1}" ${selectedMonth === idx + 1 ? 'selected' : ''}>${mName}</option>`
+                    )
+                    .join('')}
+                </select>
+              </div>
+              <div>
+                <label for="analytics-select-year" class="admin-label">Year</label>
+                <select id="analytics-select-year" class="admin-select min-w-[110px]">
+                  ${availableYears
+                    .map((yr) => `<option value="${yr}" ${selectedYear === yr ? 'selected' : ''}>${yr}</option>`)
+                    .join('')}
+                </select>
+              </div>
+            `
+                : filterInput.preset === 'this_year'
+                ? `
+              <div>
+                <label for="analytics-select-year" class="admin-label">Reporting Year</label>
+                <select id="analytics-select-year" class="admin-select min-w-[120px]">
+                  ${availableYears
+                    .map((yr) => `<option value="${yr}" ${selectedYear === yr ? 'selected' : ''}>${yr}</option>`)
+                    .join('')}
+                </select>
+              </div>
+            `
+                : filterInput.preset === 'custom_range'
+                ? `
+              <div>
+                <label for="analytics-custom-start" class="admin-label">Start Date</label>
+                <input id="analytics-custom-start" type="date" value="${esc(report.period.startDate)}" class="admin-input" />
+              </div>
+              <div>
+                <label for="analytics-custom-end" class="admin-label">End Date</label>
+                <input id="analytics-custom-end" type="date" value="${esc(report.period.endDate)}" class="admin-input" />
+              </div>
+              <button type="button" id="analytics-apply-custom-range" class="admin-btn admin-btn-primary">
+                Apply Date Range
+              </button>
+            `
+                : `
+              <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <span class="font-semibold text-slate-800">Quick Historical Jump:</span>
+                <button type="button" data-analytics-quick-month="2026-11" class="px-2.5 py-1 rounded-lg border border-slate-200 hover:border-[#0095FF] font-mono-tech text-xs font-semibold ${report.period.startDate === '2026-11-01' && report.period.endDate === '2026-11-30' ? 'bg-sky-50 text-[#0077CC] border-sky-300' : 'bg-white text-slate-700'} cursor-pointer">
+                  Nov 2026
+                </button>
+                <button type="button" data-analytics-quick-month="2026-10" class="px-2.5 py-1 rounded-lg border border-slate-200 hover:border-[#0095FF] font-mono-tech text-xs font-semibold ${report.period.startDate === '2026-10-01' && report.period.endDate === '2026-10-31' ? 'bg-sky-50 text-[#0077CC] border-sky-300' : 'bg-white text-slate-700'} cursor-pointer">
+                  Oct 2026
+                </button>
+                <button type="button" data-analytics-quick-month="2026-09" class="px-2.5 py-1 rounded-lg border border-slate-200 hover:border-[#0095FF] font-mono-tech text-xs font-semibold ${report.period.startDate === '2026-09-01' && report.period.endDate === '2026-09-30' ? 'bg-sky-50 text-[#0077CC] border-sky-300' : 'bg-white text-slate-700'} cursor-pointer">
+                  Sep 2026
+                </button>
+              </div>
+            `
+            }
+          </div>
+
+          <div class="text-xs text-slate-500 font-mono-tech">
+            Showing <strong class="text-slate-900">${s.totalOrders.value}</strong> orders in <strong class="text-[#0077CC]">${esc(report.period.label)}</strong> · Historical records preserved (${state.orders.length} total system orders)
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Monthly Business Summary Cards (9 KPIs) -->
+      <section aria-label="Monthly Business Summary Indicators" class="space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Monthly Business Summary (${esc(report.period.label)})</h3>
+            <p class="text-xs text-slate-500">Realized revenue is calculated from paid &amp; deposit-paid non-cancelled orders using historical order prices.</p>
+          </div>
+          <span class="text-xs text-slate-500">Comparison baseline: <strong class="text-slate-800">${esc(report.previousPeriod.label)}</strong></span>
+        </div>
+
+        <div id="analytics-summary-kpi-grid" class="analytics-kpi-grid" data-testid="analytics-summary-kpi-grid">
+          <!-- 1. Total Revenue -->
+          <div class="analytics-kpi-card" data-testid="kpi-total-revenue">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Revenue</span>
+              ${renderDeltaBadge(s.totalRevenue)}
+            </div>
+            <p class="font-mono-tech text-2xl font-bold text-[#0095FF]">${usd(s.totalRevenue.value)}</p>
+            <p class="text-[11px] text-slate-500">
+              Prev (${esc(report.previousPeriod.label)}): <strong class="font-mono-tech text-slate-700">${usd(s.totalRevenue.previousValue)}</strong>
+            </p>
+          </div>
+
+          <!-- 2. Total Orders -->
+          <div class="analytics-kpi-card" data-testid="kpi-total-orders">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Orders</span>
+              ${renderDeltaBadge(s.totalOrders)}
+            </div>
+            <p class="font-mono-tech text-2xl font-bold text-slate-900">${s.totalOrders.value}</p>
+            <p class="text-[11px] text-slate-500">
+              Prev: <strong class="font-mono-tech text-slate-700">${s.totalOrders.previousValue}</strong> · Gross: ${usd(s.grossOrderValue)}
+            </p>
+          </div>
+
+          <!-- 3. Completed Orders -->
+          <div class="analytics-kpi-card" data-testid="kpi-completed-orders">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Completed Orders</span>
+              ${renderDeltaBadge(s.completedOrders)}
+            </div>
+            <p class="font-mono-tech text-2xl font-bold text-emerald-600">${s.completedOrders.value}</p>
+            <p class="text-[11px] text-slate-500">
+              Prev: <strong class="font-mono-tech text-slate-700">${s.completedOrders.previousValue}</strong> · Delivered &amp; settled
+            </p>
+          </div>
+
+          <!-- 4. Pending Orders -->
+          <div class="analytics-kpi-card" data-testid="kpi-pending-orders">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Pending Orders</span>
+              ${renderDeltaBadge(s.pendingOrders)}
+            </div>
+            <p class="font-mono-tech text-2xl font-bold text-amber-600">${s.pendingOrders.value}</p>
+            <p class="text-[11px] text-slate-500">
+              Prev: <strong class="font-mono-tech text-slate-700">${s.pendingOrders.previousValue}</strong> · Processing: ${s.processingOrdersCount} · Shipped: ${s.shippedOrdersCount}
+            </p>
+          </div>
+
+          <!-- 5. Cancelled Orders -->
+          <div class="analytics-kpi-card" data-testid="kpi-cancelled-orders">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Cancelled Orders</span>
+              ${renderDeltaBadge(s.cancelledOrders, true)}
+            </div>
+            <p class="font-mono-tech text-2xl font-bold text-rose-600">${s.cancelledOrders.value}</p>
+            <p class="text-[11px] text-slate-500">
+              Prev: <strong class="font-mono-tech text-slate-700">${s.cancelledOrders.previousValue}</strong> · Excluded from revenue
+            </p>
+          </div>
+
+          <!-- 6. Total Products Sold -->
+          <div class="analytics-kpi-card" data-testid="kpi-products-sold">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Products Sold</span>
+              ${renderDeltaBadge(s.totalProductsSold)}
+            </div>
+            <p class="font-mono-tech text-2xl font-bold text-slate-900">${s.totalProductsSold.value} <span class="text-xs font-normal text-slate-500">units</span></p>
+            <p class="text-[11px] text-slate-500">
+              Prev: <strong class="font-mono-tech text-slate-700">${s.totalProductsSold.previousValue} units</strong>
+            </p>
+          </div>
+
+          <!-- 7. New Customers -->
+          <div class="analytics-kpi-card" data-testid="kpi-new-customers">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">New Customers</span>
+              ${renderDeltaBadge(s.newCustomers)}
+            </div>
+            <p class="font-mono-tech text-2xl font-bold text-[#0077CC]">${s.newCustomers.value}</p>
+            <p class="text-[11px] text-slate-500">
+              Prev: <strong class="font-mono-tech text-slate-700">${s.newCustomers.previousValue}</strong> · Registered in period
+            </p>
+          </div>
+
+          <!-- 8. Total Discounts Given -->
+          <div class="analytics-kpi-card" data-testid="kpi-discounts-given">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Discounts Given</span>
+              ${renderDeltaBadge(s.totalDiscountsGiven)}
+            </div>
+            <p class="font-mono-tech text-2xl font-bold text-indigo-600">${usd(s.totalDiscountsGiven.value)}</p>
+            <p class="text-[11px] text-slate-500">
+              Prev: <strong class="font-mono-tech text-slate-700">${usd(s.totalDiscountsGiven.previousValue)}</strong> · Catalog &amp; Vouchers
+            </p>
+          </div>
+
+          <!-- 9. Average Order Value -->
+          <div class="analytics-kpi-card" data-testid="kpi-average-order-value">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Average Order Value</span>
+              ${renderDeltaBadge(s.averageOrderValue)}
+            </div>
+            <p class="font-mono-tech text-2xl font-bold text-emerald-700">${usd(s.averageOrderValue.value)}</p>
+            <p class="text-[11px] text-slate-500">
+              Prev: <strong class="font-mono-tech text-slate-700">${usd(s.averageOrderValue.previousValue)}</strong> · Per realized order
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. Sales and Revenue Analytics -->
+      <section id="analytics-sales-section" class="space-y-4">
+        <!-- Business Trajectory Banner -->
+        <div class="p-4 rounded-2xl border ${perfTone.bg} flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <span class="px-2.5 py-1 rounded-lg font-mono-tech text-xs font-bold ${perfTone.badge}">
+              ${esc(perfTone.label)}
+            </span>
+            <p class="text-xs sm:text-sm font-semibold">${esc(sales.performanceInsight)}</p>
+          </div>
+          <span class="font-mono-tech text-xs font-bold shrink-0">
+            ${esc(report.period.label)}: ${usd(s.totalRevenue.value)} vs ${esc(report.previousPeriod.label)}: ${usd(s.totalRevenue.previousValue)}
+          </span>
+        </div>
+
+        <!-- Daily Revenue & Daily Orders Charts (2-col grid) -->
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <div class="analytics-chart-card space-y-3" id="analytics-chart-daily-revenue">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <h4 class="text-sm font-bold text-slate-900">Daily Revenue Throughout Selected Period</h4>
+                <p class="text-xs text-slate-500">${esc(report.period.label)} · Realized daily revenue in Philippine Peso (₱)</p>
+              </div>
+              <span class="font-mono-tech text-sm font-bold text-[#0095FF]">${usd(s.totalRevenue.value)}</span>
+            </div>
+            ${buildDailyRevenueSvg()}
+          </div>
+
+          <div class="analytics-chart-card space-y-3" id="analytics-chart-daily-orders">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <h4 class="text-sm font-bold text-slate-900">Number of Orders Per Day</h4>
+                <p class="text-xs text-slate-500">${esc(report.period.label)} · Daily customer order volume across workshop queue</p>
+              </div>
+              <span class="font-mono-tech text-sm font-bold text-emerald-700">${s.totalOrders.value} Orders</span>
+            </div>
+            ${buildDailyOrdersSvg()}
+          </div>
+        </div>
+
+        <!-- Monthly Revenue Throughout Selected Year & Revenue by Category (2-col grid) -->
+        <div class="grid grid-cols-1 xl:grid-cols-12 gap-5">
+          <!-- Monthly Revenue Throughout Selected Year + Sales Comparison Between Months -->
+          <div class="xl:col-span-7 analytics-chart-card space-y-4" id="analytics-chart-monthly-revenue">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h4 class="text-sm font-bold text-slate-900">Monthly Revenue (${sales.year}) &amp; Month-over-Month Comparison</h4>
+                <p class="text-xs text-slate-500">Annual trajectory and month-to-month sales comparison for ${sales.year}</p>
+              </div>
+              <span class="font-mono-tech text-xs font-bold text-slate-700">
+                ${sales.year} Total: ${usd(monthlyComparison.reduce((sum, m) => sum + m.revenue, 0))}
+              </span>
+            </div>
+
+            <!-- 12-Month Vertical Bar Chart -->
+            <div class="grid grid-cols-12 gap-1.5 items-end h-44 pt-6 px-2 border-b border-slate-200 bg-slate-50/50 rounded-t-xl">
+              ${monthlyComparison
+                .map((m) => {
+                  const pctH = Math.max(4, Math.round((Number(m.revenue || 0) / maxMonthRev) * 100));
+                  const isSelectedMonth = Number(m.month) === Number(report.period.month);
+                  const hasRev = Number(m.revenue || 0) > 0;
+                  return `
+                    <div class="flex flex-col items-center justify-end h-full group">
+                      <span class="font-mono-tech text-[9px] font-bold ${hasRev ? 'text-slate-700' : 'text-slate-300'} mb-1">
+                        ${hasRev ? '₱' + (m.revenue >= 1000 ? (m.revenue / 1000).toFixed(1) + 'k' : m.revenue) : '0'}
+                      </span>
+                      <div
+                        class="w-full max-w-[28px] rounded-t-md transition-all ${
+                          isSelectedMonth
+                            ? 'bg-[#0095FF] ring-2 ring-[#0095FF]/30'
+                            : hasRev
+                            ? 'bg-[#0B0F17] opacity-85'
+                            : 'bg-slate-200'
+                        }"
+                        style="height: ${pctH}%"
+                        title="${esc(m.fullLabel)}: ${usd(m.revenue)} (${m.orders} orders)"
+                      ></div>
+                      <span class="font-mono-tech text-[10px] font-semibold ${isSelectedMonth ? 'text-[#0095FF] font-bold' : 'text-slate-500'} mt-1.5 pb-1">
+                        ${esc(m.label)}
+                      </span>
+                    </div>
+                  `;
+                })
+                .join('')}
+            </div>
+
+            <!-- Month-over-Month Comparison Table -->
+            <div class="overflow-x-auto">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>Month</th>
+                    <th>Orders</th>
+                    <th>Products Sold</th>
+                    <th>Realized Revenue</th>
+                    <th class="text-right">vs Previous Month</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${monthlyComparison
+                    .filter((m) => m.orders > 0 || m.revenue > 0 || m.month === report.period.month || m.month === report.period.month - 1)
+                    .map(
+                      (m) => `
+                        <tr class="${m.month === report.period.month ? 'bg-sky-50/60' : ''}">
+                          <td class="font-semibold text-xs text-slate-900 whitespace-nowrap">
+                            ${esc(m.fullLabel)}
+                            ${m.month === report.period.month ? `<span class="ml-1.5 px-1.5 py-0.5 rounded bg-[#0095FF] text-white font-mono-tech text-[10px]">Selected</span>` : ''}
+                          </td>
+                          <td class="font-mono-tech text-xs text-slate-700">${m.orders}</td>
+                          <td class="font-mono-tech text-xs text-slate-700">${m.productsSold} units</td>
+                          <td class="font-mono-tech text-xs font-bold text-[#0095FF]">${usd(m.revenue)}</td>
+                          <td class="text-right whitespace-nowrap">${renderDeltaBadge(m.vsPreviousMonth)}</td>
+                        </tr>
+                      `
+                    )
+                    .join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Revenue by Product Category -->
+          <div class="xl:col-span-5 analytics-chart-card space-y-4" id="analytics-chart-category-revenue">
+            <div>
+              <h4 class="text-sm font-bold text-slate-900">Revenue by Product Category</h4>
+              <p class="text-xs text-slate-500">Category contribution to ${esc(report.period.label)} showroom revenue</p>
+            </div>
+
+            <div class="space-y-3.5">
+              ${(sales.revenueByCategory || [])
+                .map(
+                  (cat) => `
+                  <div class="space-y-1.5 p-3 rounded-xl border border-slate-100 bg-slate-50/60">
+                    <div class="flex items-center justify-between gap-2">
+                      <div>
+                        <p class="text-xs font-bold text-slate-900">${esc(cat.categoryName)}</p>
+                        <p class="text-[11px] text-slate-500 font-mono-tech">${cat.orders} ${cat.orders === 1 ? 'order' : 'orders'} · ${cat.unitsSold} ${cat.unitsSold === 1 ? 'unit' : 'units'} sold</p>
+                      </div>
+                      <div class="text-right">
+                        <p class="font-mono-tech text-xs font-bold text-[#0095FF]">${usd(cat.revenue)}</p>
+                        <p class="font-mono-tech text-[11px] text-slate-500">${cat.sharePercent.toFixed(1)}% share</p>
+                      </div>
+                    </div>
+                    <div class="analytics-progress-track">
+                      <div class="analytics-progress-fill bg-[#0095FF]" style="width: ${Math.min(100, Math.max(cat.revenue > 0 ? 4 : 0, cat.sharePercent))}%"></div>
+                    </div>
+                  </div>
+                `
+                )
+                .join('')}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. Best-Selling Products & Low-Sales Identification -->
+      <section id="analytics-best-sellers-section" class="grid grid-cols-1 xl:grid-cols-12 gap-5">
+        <div class="xl:col-span-8 admin-card overflow-hidden">
+          <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-bold text-slate-900">Top 5 Best-Selling Products (${esc(report.period.label)})</h3>
+              <p class="text-xs text-slate-500">Ranked by revenue and quantity sold during the selected period.</p>
+            </div>
+            <span class="px-2.5 py-1 rounded-full bg-sky-50 text-[#0077CC] border border-sky-200 font-mono-tech text-xs font-bold">
+              Top 5 Ranked
+            </span>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="admin-table" id="analytics-best-sellers-table" data-testid="analytics-best-sellers-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th class="admin-col-primary">Product</th>
+                  <th>Category</th>
+                  <th>Qty Sold</th>
+                  <th>Total Revenue</th>
+                  <th class="text-right">Current Stock</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(bestSellers.topFive || [])
+                  .map((item) => {
+                    const imgUrl = String(item.image || 'assets/images/category_dining_tables.jpg').replace(/^\//, '');
+                    const stockClass =
+                      item.stockStatusKey === 'out_of_stock'
+                        ? 'admin-status-out-of-stock'
+                        : item.stockStatusKey === 'low_stock'
+                        ? 'admin-status-low-stock'
+                        : 'admin-status-in-stock';
+                    return `
+                      <tr>
+                        <td class="whitespace-nowrap">
+                          <span class="inline-flex items-center justify-center w-7 h-7 rounded-lg ${item.rank <= 3 ? 'bg-[#0B0F17] text-[#BCE3FF]' : 'bg-slate-100 text-slate-700'} font-mono-tech text-xs font-bold">
+                            #${item.rank}
+                          </span>
+                        </td>
+                        <td class="admin-col-primary">
+                          <div class="flex items-center gap-3">
+                            <img src="${esc(imgUrl)}" alt="${esc(item.name)}" class="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0" />
+                            <div>
+                              <p class="admin-table-title">${esc(item.name)}</p>
+                              <p class="admin-table-sub font-mono-tech">ProductID: ${esc(item.productId || item.sku)}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td class="text-xs text-slate-600 whitespace-nowrap">${esc(item.categoryName)}</td>
+                        <td class="font-mono-tech text-xs font-bold text-slate-900 whitespace-nowrap">${item.quantitySold} ${item.quantitySold === 1 ? 'unit' : 'units'}</td>
+                        <td class="font-mono-tech text-xs font-bold text-[#0095FF] whitespace-nowrap">${usd(item.totalRevenue)}</td>
+                        <td class="text-right whitespace-nowrap">
+                          <span class="admin-status-badge ${stockClass}">
+                            <span class="admin-status-badge-dot"></span>${esc(item.stockStatusLabel)} (${item.currentStock})
+                          </span>
+                        </td>
+                      </tr>
+                    `;
+                  })
+                  .join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Products with Fewer Sales -->
+        <div class="xl:col-span-4 admin-card overflow-hidden flex flex-col justify-between">
+          <div>
+            <div class="px-5 py-4 border-b border-slate-200 bg-amber-50/60 flex items-center justify-between gap-2">
+              <div>
+                <h3 class="text-sm font-bold text-slate-900">Products with Fewer Sales</h3>
+                <p class="text-xs text-slate-600">Pieces with 0–1 units sold in ${esc(report.period.label)}</p>
+              </div>
+              <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-mono-tech text-xs font-bold">
+                ${(bestSellers.lowSellingProducts || []).length} Pieces
+              </span>
+            </div>
+
+            <div id="analytics-low-selling-list" class="p-4 space-y-2.5">
+              ${
+                (bestSellers.lowSellingProducts || []).length === 0
+                  ? `<p class="text-xs text-slate-500 py-6 text-center">All catalog products recorded strong unit sales in this period.</p>`
+                  : (bestSellers.lowSellingProducts || [])
+                      .slice(0, 6)
+                      .map((item) => {
+                        const imgUrl = String(item.image || 'assets/images/category_living_lounge.jpg').replace(/^\//, '');
+                        return `
+                          <div class="p-3 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-3">
+                            <div class="flex items-center gap-2.5 min-w-0">
+                              <img src="${esc(imgUrl)}" alt="${esc(item.name)}" class="w-10 h-10 rounded-lg object-cover border border-slate-200 shrink-0" />
+                              <div class="min-w-0">
+                                <p class="text-xs font-bold text-slate-900 truncate">${esc(item.name)}</p>
+                                <p class="text-[11px] text-slate-500 font-mono-tech">${esc(item.productId || item.sku)} · Stock: ${item.currentStock}</p>
+                              </div>
+                            </div>
+                            <div class="text-right shrink-0">
+                              <span class="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-mono-tech text-[11px] font-bold">
+                                ${item.quantitySold} sold
+                              </span>
+                              <button
+                                type="button"
+                                data-analytics-promote-product="${esc(item.id)}"
+                                class="analytics-no-print block mt-1 text-[11px] font-semibold text-[#0077CC] hover:underline cursor-pointer"
+                              >
+                                Issue Voucher →
+                              </button>
+                            </div>
+                          </div>
+                        `;
+                      })
+                      .join('')
+              }
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6. Order Analytics & 7. Customer Analytics -->
+      <section class="grid grid-cols-1 xl:grid-cols-12 gap-5">
+        <!-- 6. Order Status Distribution -->
+        <div id="analytics-orders-section" class="xl:col-span-5 analytics-chart-card space-y-4">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-bold text-slate-900">Order Analytics — Status Distribution</h3>
+              <p class="text-xs text-slate-500">Distribution across system order statuses in ${esc(report.period.label)}</p>
+            </div>
+            <span class="font-mono-tech text-xs font-bold text-slate-700">${ordAnalytics.totalOrders} Total</span>
+          </div>
+
+          <!-- Stacked Distribution Bar -->
+          <div class="h-4 w-full rounded-full bg-slate-100 overflow-hidden flex border border-slate-200">
+            ${(ordAnalytics.distribution || [])
+              .map((st) => {
+                if (st.count <= 0) return '';
+                const colorMap = {
+                  Pending: 'bg-amber-400',
+                  Processing: 'bg-[#0095FF]',
+                  Shipped: 'bg-indigo-500',
+                  Completed: 'bg-emerald-500',
+                  Cancelled: 'bg-rose-500',
+                };
+                return `<div class="${colorMap[st.status] || 'bg-slate-400'} h-full" style="width: ${Math.max(4, st.percentage)}%" title="${esc(st.status)}: ${st.count} (${st.percentage.toFixed(1)}%)"></div>`;
+              })
+              .join('')}
+          </div>
+
+          <div id="analytics-order-distribution" class="space-y-2.5">
+            ${(ordAnalytics.distribution || [])
+              .map((st) => {
+                const styleMap = {
+                  Pending: { dot: 'bg-amber-500', bar: 'bg-amber-500', badge: 'bg-amber-50 text-amber-800 border-amber-200' },
+                  Processing: { dot: 'bg-[#0095FF]', bar: 'bg-[#0095FF]', badge: 'bg-sky-50 text-[#0077CC] border-sky-200' },
+                  Shipped: { dot: 'bg-indigo-500', bar: 'bg-indigo-500', badge: 'bg-indigo-50 text-indigo-800 border-indigo-200' },
+                  Completed: { dot: 'bg-emerald-500', bar: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+                  Cancelled: { dot: 'bg-rose-500', bar: 'bg-rose-500', badge: 'bg-rose-50 text-rose-800 border-rose-200' },
+                }[st.status] || { dot: 'bg-slate-400', bar: 'bg-slate-400', badge: 'bg-slate-100 text-slate-700 border-slate-200' };
+
+                return `
+                  <div class="p-3 rounded-xl border border-slate-100 bg-slate-50/70 space-y-1.5">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full ${styleMap.dot}"></span>
+                        <span class="text-xs font-bold text-slate-900">${esc(st.status)}</span>
+                        <span class="px-2 py-0.5 rounded-md border font-mono-tech text-[11px] font-bold ${styleMap.badge}">
+                          ${st.count} ${st.count === 1 ? 'order' : 'orders'}
+                        </span>
+                      </div>
+                      <div class="text-right">
+                        <span class="font-mono-tech text-xs font-bold text-slate-900">${usd(st.totalValue)}</span>
+                        <span class="font-mono-tech text-[11px] text-slate-500 ml-1">(${st.percentage.toFixed(1)}%)</span>
+                      </div>
+                    </div>
+                    <div class="analytics-progress-track">
+                      <div class="analytics-progress-fill ${styleMap.bar}" style="width: ${Math.min(100, st.percentage)}%"></div>
+                    </div>
+                  </div>
+                `;
+              })
+              .join('')}
+          </div>
+        </div>
+
+        <!-- 7. Customer Analytics -->
+        <div id="analytics-customers-section" class="xl:col-span-7 analytics-chart-card space-y-4">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-bold text-slate-900">Customer Analytics &amp; Retention</h3>
+              <p class="text-xs text-slate-500">Registrations, active ordering clients, returning buyers, and top lifetime spenders</p>
+            </div>
+            <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 font-mono-tech text-xs font-bold">
+              ${custAnalytics.totalRegisteredCustomers} Registered Clients
+            </span>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">New in Period</span>
+              <span class="font-mono-tech text-xl font-bold text-[#0095FF] mt-1 block">${custAnalytics.newCustomersCount}</span>
+              <span class="text-[11px] text-slate-500">Registered ${esc(report.period.label)}</span>
+            </div>
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Placed Orders</span>
+              <span class="font-mono-tech text-xl font-bold text-emerald-600 mt-1 block">${custAnalytics.customersWhoPlacedOrdersCount}</span>
+              <span class="text-[11px] text-slate-500">Active buyers in period</span>
+            </div>
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Returning Clients</span>
+              <span class="font-mono-tech text-xl font-bold text-indigo-600 mt-1 block">${custAnalytics.returningCustomersCount}</span>
+              <span class="text-[11px] text-slate-500">${custAnalytics.totalLifetimeReturningCustomers} all-time repeat</span>
+            </div>
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Directory Total</span>
+              <span class="font-mono-tech text-xl font-bold text-slate-900 mt-1 block">${custAnalytics.totalRegisteredCustomers}</span>
+              <span class="text-[11px] text-slate-500">Verified accounts</span>
+            </div>
+          </div>
+
+          <!-- Monthly Customer Registration Trends -->
+          <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/40 space-y-2" id="analytics-customer-trend-chart">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-slate-800">Monthly Customer Registration &amp; Active Buyer Trends (${sales.year})</span>
+              <span class="text-[11px] text-slate-500 font-mono-tech">Blue = New Registrations · Green = Active Buyers</span>
+            </div>
+            <div class="grid grid-cols-12 gap-1.5 items-end h-20 pt-2">
+              ${(custAnalytics.monthlyRegistrationTrends || [])
+                .map((m) => {
+                  const regH = Math.min(100, Math.max(m.newRegistrations > 0 ? 25 : 8, m.newRegistrations * 32));
+                  const actH = Math.min(100, Math.max(m.activeBuyers > 0 ? 25 : 8, m.activeBuyers * 28));
+                  return `
+                    <div class="flex flex-col items-center justify-end h-full">
+                      <div class="flex items-end gap-0.5 h-full w-full justify-center">
+                        <div class="w-2 rounded-t ${m.newRegistrations > 0 ? 'bg-[#0095FF]' : 'bg-slate-200'}" style="height: ${regH}%" title="${esc(m.label)}: ${m.newRegistrations} new registration(s)"></div>
+                        <div class="w-2 rounded-t ${m.activeBuyers > 0 ? 'bg-emerald-500' : 'bg-slate-200'}" style="height: ${actH}%" title="${esc(m.label)}: ${m.activeBuyers} active buyer(s)"></div>
+                      </div>
+                      <span class="font-mono-tech text-[9px] text-slate-500 mt-1">${esc(m.label)}</span>
+                    </div>
+                  `;
+                })
+                .join('')}
+            </div>
+          </div>
+
+          <!-- Customers with Highest Total Purchases -->
+          <div class="overflow-x-auto">
+            <table class="admin-table" id="analytics-top-customers-table">
+              <thead>
+                <tr>
+                  <th>Customer</th>
+                  <th>Period Orders</th>
+                  <th>Period Spend</th>
+                  <th>Lifetime Orders</th>
+                  <th class="text-right">Lifetime Total Purchases</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(custAnalytics.highestPurchaseCustomers || [])
+                  .slice(0, 5)
+                  .map(
+                    (c) => `
+                    <tr>
+                      <td>
+                        <p class="admin-table-title">${esc(c.name)}</p>
+                        <p class="admin-table-sub font-mono-tech">${esc(c.customerId)} · ${esc(c.email)}</p>
+                      </td>
+                      <td class="font-mono-tech text-xs text-slate-700">${c.periodOrders}</td>
+                      <td class="font-mono-tech text-xs font-bold text-[#0077CC]">${usd(c.periodSpent)}</td>
+                      <td class="font-mono-tech text-xs text-slate-700">${c.lifetimeOrders}</td>
+                      <td class="text-right font-mono-tech text-xs font-bold text-[#0095FF]">${usd(c.lifetimeSpent)}</td>
+                    </tr>
+                  `
+                  )
+                  .join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 8. Inventory Analytics (Current Live Snapshot vs Historical Monthly Movements) -->
+      <section id="analytics-inventory-section" class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        <!-- Current Live Inventory Levels -->
+        <div class="admin-card overflow-hidden">
+          <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="text-sm font-bold text-slate-900">Current Live Inventory Snapshot</h3>
+                <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-mono-tech text-[10px] font-bold">LIVE STOCK STATE</span>
+              </div>
+              <p class="text-xs text-slate-500 mt-0.5">Real-time showroom finished catalog &amp; workshop raw material stock levels</p>
+            </div>
+            <span class="font-mono-tech text-sm font-bold text-[#0095FF]">
+              Value: ${usd(invAnalytics.currentSnapshot.currentInventoryValue)}
+            </span>
+          </div>
+
+          <div class="p-5 space-y-4">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+                <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Available Products</span>
+                <span class="font-mono-tech text-lg font-bold text-emerald-600 mt-1 block">${invAnalytics.currentSnapshot.totalAvailableProducts} / ${invAnalytics.currentSnapshot.totalCatalogProducts}</span>
+                <span class="text-[11px] text-slate-500">${invAnalytics.currentSnapshot.totalAvailableUnits} units on floor</span>
+              </div>
+              <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+                <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Low-Stock Products</span>
+                <span class="font-mono-tech text-lg font-bold text-amber-600 mt-1 block">${invAnalytics.currentSnapshot.lowStockProductsCount}</span>
+                <span class="text-[11px] text-slate-500">At or below min level</span>
+              </div>
+              <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+                <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Out-of-Stock</span>
+                <span class="font-mono-tech text-lg font-bold text-rose-600 mt-1 block">${invAnalytics.currentSnapshot.outOfStockProductsCount}</span>
+                <span class="text-[11px] text-slate-500">0 units available</span>
+              </div>
+              <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+                <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Materials to Restock</span>
+                <span class="font-mono-tech text-lg font-bold text-amber-700 mt-1 block">${invAnalytics.currentSnapshot.materialsRequiringRestockingCount}</span>
+                <span class="text-[11px] text-slate-500">Workshop materials</span>
+              </div>
+            </div>
+
+            <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span>Finished Catalog Value: <strong class="font-mono-tech text-slate-900">${usd(invAnalytics.currentSnapshot.catalogInventoryValue)}</strong></span>
+              <span>Raw Materials Value: <strong class="font-mono-tech text-slate-900">${usd(invAnalytics.currentSnapshot.materialInventoryValue)}</strong></span>
+              <span>Combined Value: <strong class="font-mono-tech text-[#0095FF]">${usd(invAnalytics.currentSnapshot.currentInventoryValue)}</strong></span>
+            </div>
+
+            <!-- Materials Requiring Restocking & Low-Stock Products List -->
+            <div class="space-y-2">
+              <p class="text-xs font-bold text-slate-800 uppercase tracking-wider">Restock Alerts (Current Live Status)</p>
+              ${(invAnalytics.currentSnapshot.materialsRequiringRestocking || [])
+                .map(
+                  (m) => `
+                  <div class="p-2.5 rounded-xl border border-amber-200 bg-amber-50/70 flex items-center justify-between gap-2 text-xs">
+                    <div>
+                      <span class="font-bold text-slate-900">${esc(m.name)}</span>
+                      <span class="font-mono-tech text-[11px] text-slate-600 ml-1">(${esc(m.materialId)} · ${esc(m.category)})</span>
+                    </div>
+                    <span class="font-mono-tech font-bold text-amber-800">
+                      ${m.quantity} / min ${m.minimumStock} ${esc(m.unit)} (${esc(m.status)})
+                    </span>
+                  </div>
+                `
+                )
+                .join('')}
+              ${(invAnalytics.currentSnapshot.lowStockProducts || [])
+                .concat(invAnalytics.currentSnapshot.outOfStockProducts || [])
+                .map(
+                  (p) => `
+                  <div class="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-2 text-xs">
+                    <div>
+                      <span class="font-bold text-slate-900">${esc(p.name)}</span>
+                      <span class="font-mono-tech text-[11px] text-slate-500 ml-1">(${esc(p.productId)})</span>
+                    </div>
+                    <span class="font-mono-tech font-bold ${p.stock <= 0 ? 'text-rose-600' : 'text-amber-700'}">
+                      ${p.stock} in stock (min ${p.minStock})
+                    </span>
+                  </div>
+                `
+                )
+                .join('')}
+            </div>
+          </div>
+        </div>
+
+        <!-- Historical Monthly Inventory Movements -->
+        <div class="admin-card overflow-hidden">
+          <div class="px-6 py-4 border-b border-slate-200 bg-sky-50/60 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="text-sm font-bold text-slate-900">Historical Period Movements (${esc(report.period.label)})</h3>
+                <span class="px-2 py-0.5 rounded-full bg-sky-100 text-[#0077CC] font-mono-tech text-[10px] font-bold">PERIOD AUDIT LOG</span>
+              </div>
+              <p class="text-xs text-slate-500 mt-0.5">Materials &amp; stock consumed or restocked specifically during ${esc(report.period.label)}</p>
+            </div>
+            <span class="font-mono-tech text-xs font-bold text-slate-700">
+              ${invAnalytics.periodMovements.totalMovementsCount} Movements
+            </span>
+          </div>
+
+          <div class="p-5 space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+              <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60">
+                <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Consumed in Period (Stock Out)</span>
+                <span class="font-mono-tech text-lg font-bold text-rose-600 mt-1 block">-${invAnalytics.periodMovements.totalUnitsConsumed} units</span>
+                <span class="text-[11px] text-slate-500">Est. value consumed: <strong class="font-mono-tech">${usd(invAnalytics.periodMovements.totalConsumedValue)}</strong></span>
+              </div>
+              <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60">
+                <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Restocked in Period (Stock In)</span>
+                <span class="font-mono-tech text-lg font-bold text-emerald-600 mt-1 block">+${invAnalytics.periodMovements.totalUnitsRestocked} units</span>
+                <span class="text-[11px] text-slate-500">Restock outlay: <strong class="font-mono-tech">${usd(invAnalytics.periodMovements.totalRestockedCost)}</strong></span>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <p class="text-xs font-bold text-slate-800 uppercase tracking-wider">Materials &amp; Items Consumed During ${esc(report.period.label)}</p>
+              ${
+                (invAnalytics.periodMovements.materialsConsumedInPeriod || []).length === 0
+                  ? `<p class="text-xs text-slate-500 py-4 text-center">No Stock Out consumption movements recorded in ${esc(report.period.label)}.</p>`
+                  : (invAnalytics.periodMovements.materialsConsumedInPeriod || [])
+                      .map(
+                        (item) => `
+                        <div class="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-2 text-xs">
+                          <div>
+                            <p class="font-bold text-slate-900">${esc(item.name)}</p>
+                            <p class="font-mono-tech text-[11px] text-slate-500">ID: ${esc(item.code)} · ${item.transactionsCount} movement(s) · Last: ${esc(item.lastReason)}</p>
+                          </div>
+                          <div class="text-right font-mono-tech shrink-0">
+                            <p class="font-bold text-rose-600">-${item.unitsConsumed} units</p>
+                            <p class="text-[11px] text-slate-600">${usd(item.totalCost)}</p>
+                          </div>
+                        </div>
+                      `
+                      )
+                      .join('')
+              }
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9. Voucher Analytics -->
+      <section id="analytics-vouchers-section" class="admin-card overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-bold text-slate-900">Fixed-Amount Voucher Analytics (${esc(report.period.label)})</h3>
+            <p class="text-xs text-slate-500">Issuance, live expiration status, redemption rate, and fixed-amount Peso discounts redeemed</p>
+          </div>
+          <span class="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 font-mono-tech text-xs font-bold">
+            Redemption Rate: ${vchAnalytics.redemptionRate.toFixed(1)}%
+          </span>
+        </div>
+
+        <div class="p-5 space-y-5">
+          <div class="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Issued (Period)</span>
+              <span class="font-mono-tech text-lg font-bold text-slate-900 mt-1 block">${vchAnalytics.totalIssuedInPeriod}</span>
+              <span class="text-[11px] text-slate-500">${vchAnalytics.totalVouchersIssued} all-time</span>
+            </div>
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Active Vouchers</span>
+              <span class="font-mono-tech text-lg font-bold text-emerald-600 mt-1 block">${vchAnalytics.activeVouchers}</span>
+              <span class="text-[11px] text-slate-500">Currently usable</span>
+            </div>
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Redeemed</span>
+              <span class="font-mono-tech text-lg font-bold text-[#0095FF] mt-1 block">${vchAnalytics.redeemedVouchers}</span>
+              <span class="text-[11px] text-slate-500">${vchAnalytics.redeemedInPeriodCount} in period</span>
+            </div>
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Expired</span>
+              <span class="font-mono-tech text-lg font-bold text-amber-600 mt-1 block">${vchAnalytics.expiredVouchers}</span>
+              <span class="text-[11px] text-slate-500">Past expiry date</span>
+            </div>
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Revoked</span>
+              <span class="font-mono-tech text-lg font-bold text-rose-600 mt-1 block">${vchAnalytics.revokedVouchers}</span>
+              <span class="text-[11px] text-slate-500">Admin revoked</span>
+            </div>
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Discount Redeemed</span>
+              <span class="font-mono-tech text-lg font-bold text-indigo-600 mt-1 block">${usd(vchAnalytics.totalDiscountRedeemed)}</span>
+              <span class="text-[11px] text-slate-500">Period: ${usd(vchAnalytics.periodDiscountRedeemed)}</span>
+            </div>
+            <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Redemption Rate</span>
+              <span class="font-mono-tech text-lg font-bold text-emerald-700 mt-1 block">${vchAnalytics.redemptionRate.toFixed(1)}%</span>
+              <span class="text-[11px] text-slate-500">Period: ${vchAnalytics.periodRedemptionRate.toFixed(1)}%</span>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Voucher Code</th>
+                  <th>Assigned Customer</th>
+                  <th>Target Product</th>
+                  <th>Fixed Discount</th>
+                  <th>Issued Date</th>
+                  <th>Expiration</th>
+                  <th class="text-right">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(vchAnalytics.voucherBreakdown || [])
+                  .map((v) => {
+                    const statusBadgeMap = {
+                      Active: 'admin-status-in-stock',
+                      'Expiring Soon': 'admin-status-low-stock',
+                      Used: 'bg-sky-50 text-[#0077CC] border border-sky-200',
+                      Expired: 'admin-status-out-of-stock',
+                      Revoked: 'admin-status-out-of-stock',
+                    };
+                    return `
+                      <tr>
+                        <td class="whitespace-nowrap">
+                          <span class="vch-code-chip">${esc(v.code)}</span>
+                          <p class="admin-table-sub font-mono-tech mt-0.5">VoucherID: ${esc(v.voucherId)}</p>
+                        </td>
+                        <td>
+                          <p class="admin-table-title">${esc(v.customerName)}</p>
+                          <p class="admin-table-sub font-mono-tech">${esc(v.customerEmail)}</p>
+                        </td>
+                        <td class="text-xs font-semibold text-slate-800">${esc(v.productName)}</td>
+                        <td class="font-mono-tech text-xs font-bold text-[#0095FF] whitespace-nowrap">-${usd(v.discountAmount)}</td>
+                        <td class="font-mono-tech text-xs text-slate-600 whitespace-nowrap">${esc(v.issuedAt)}</td>
+                        <td class="font-mono-tech text-xs text-slate-600 whitespace-nowrap">${esc(String(v.expiresAt || 'No expiry').slice(0, 16))}</td>
+                        <td class="text-right whitespace-nowrap">
+                          <span class="admin-status-badge ${statusBadgeMap[v.status] || 'admin-status-in-stock'}">
+                            <span class="admin-status-badge-dot"></span>${esc(v.status)}
+                          </span>
+                        </td>
+                      </tr>
+                    `;
+                  })
+                  .join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 10. Period Transactions Detail Ledger (Included in Printable & Exportable Reports) -->
+      <section id="analytics-transactions-section" class="admin-card overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-bold text-slate-900">Period Transaction Details (${esc(report.period.label)})</h3>
+            <p class="text-xs text-slate-500">Complete transaction audit log included in downloadable PDF, CSV, and Printable business reports</p>
+          </div>
+          <span class="font-mono-tech text-xs font-bold text-slate-700">
+            ${(report.transactions || []).length} Transactions
+          </span>
+        </div>
+
+        ${
+          (report.transactions || []).length === 0
+            ? `<div class="p-8 text-center text-xs text-slate-500">No orders were placed during ${esc(report.period.label)}. Select another month or date range above to inspect historical transactions.</div>`
+            : `
+          <div class="overflow-x-auto">
+            <table class="admin-table" data-testid="analytics-transactions-table">
+              <thead>
+                <tr>
+                  <th>Order # / OrderID</th>
+                  <th>Date</th>
+                  <th>Customer</th>
+                  <th>Product</th>
+                  <th>Qty</th>
+                  <th>Order Status</th>
+                  <th>Payment</th>
+                  <th>Discount</th>
+                  <th class="text-right">Realized Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(report.transactions || [])
+                  .map(
+                    (t) => `
+                    <tr>
+                      <td class="whitespace-nowrap">
+                        <p class="font-mono-tech text-xs font-bold text-[#0095FF]">#${esc(t.orderNumber)}</p>
+                        <p class="admin-table-sub font-mono-tech">OrderID: ${esc(t.orderId)}</p>
+                      </td>
+                      <td class="font-mono-tech text-xs text-slate-600 whitespace-nowrap">${esc(t.orderDate)}</td>
+                      <td>
+                        <p class="admin-table-title">${esc(t.clientName)}</p>
+                        <p class="admin-table-sub font-mono-tech">${esc(t.clientEmail)}</p>
+                      </td>
+                      <td>
+                        <p class="admin-table-title">${esc(t.furnitureName)}</p>
+                        <p class="admin-table-sub font-mono-tech">ProductID: ${esc(t.productId)}</p>
+                      </td>
+                      <td class="font-mono-tech text-xs text-slate-700">${t.quantity}</td>
+                      <td class="whitespace-nowrap">
+                        <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-800 font-mono-tech text-[11px] font-bold">${esc(t.normalizedStatus)}</span>
+                      </td>
+                      <td class="font-mono-tech text-xs text-slate-600 whitespace-nowrap">${esc(t.paymentStatus)}</td>
+                      <td class="font-mono-tech text-xs text-indigo-600 whitespace-nowrap">${t.discountAmount > 0 ? '-' + usd(t.discountAmount) : '₱0'}</td>
+                      <td class="text-right font-mono-tech text-xs font-bold ${t.realizedRevenue > 0 ? 'text-emerald-700' : 'text-slate-400'} whitespace-nowrap">
+                        ${usd(t.realizedRevenue)}
+                      </td>
+                    </tr>
+                  `
+                  )
+                  .join('')}
+              </tbody>
+            </table>
+          </div>
+        `
+        }
+      </section>
+    </div>
+  `;
+
+  // Bind Preset Filter Buttons
+  analyticsEl.querySelectorAll('[data-analytics-preset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const preset = btn.getAttribute('data-analytics-preset') || 'this_month';
+      state.adminAnalyticsPreset = preset;
+      if (preset === 'select_month') {
+        if (!state.adminAnalyticsYear) state.adminAnalyticsYear = String(defaultManilaRange.current.year);
+        if (!state.adminAnalyticsMonth) state.adminAnalyticsMonth = String(defaultManilaRange.current.month);
+      } else if (preset === 'this_year') {
+        if (!state.adminAnalyticsYear) state.adminAnalyticsYear = String(defaultManilaRange.current.year);
+      } else if (preset === 'custom_range') {
+        if (!state.adminAnalyticsStartDate) state.adminAnalyticsStartDate = report.period.startDate;
+        if (!state.adminAnalyticsEndDate) state.adminAnalyticsEndDate = report.period.endDate;
+      }
+      renderAdminAnalyticsSection();
+    });
+  });
+
+  // Bind Quick Historical Month Jump Buttons
+  analyticsEl.querySelectorAll('[data-analytics-quick-month]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ym = btn.getAttribute('data-analytics-quick-month') || '2026-11';
+      const [yStr, mStr] = ym.split('-');
+      state.adminAnalyticsPreset = 'select_month';
+      state.adminAnalyticsYear = yStr;
+      state.adminAnalyticsMonth = String(Number(mStr));
+      renderAdminAnalyticsSection();
+    });
+  });
+
+  // Bind Month & Year Selectors
+  const monthSelect = document.getElementById('analytics-select-month');
+  if (monthSelect) {
+    monthSelect.addEventListener('change', (e) => {
+      state.adminAnalyticsMonth = e.target.value;
+      renderAdminAnalyticsSection();
+    });
+  }
+  const yearSelect = document.getElementById('analytics-select-year');
+  if (yearSelect) {
+    yearSelect.addEventListener('change', (e) => {
+      state.adminAnalyticsYear = e.target.value;
+      renderAdminAnalyticsSection();
+    });
+  }
+
+  // Bind Custom Date Range Apply Button
+  const applyCustomBtn = document.getElementById('analytics-apply-custom-range');
+  if (applyCustomBtn) {
+    applyCustomBtn.addEventListener('click', () => {
+      const startInput = document.getElementById('analytics-custom-start');
+      const endInput = document.getElementById('analytics-custom-end');
+      state.adminAnalyticsStartDate = startInput ? startInput.value : '';
+      state.adminAnalyticsEndDate = endInput ? endInput.value : '';
+      renderAdminAnalyticsSection();
+    });
+  }
+
+  // Bind "Issue Voucher" shortcut on low-selling products
+  analyticsEl.querySelectorAll('[data-analytics-promote-product]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const pid = btn.getAttribute('data-analytics-promote-product') || '';
+      if (window.__switchAdminTab) {
+        window.__switchAdminTab('vouchers');
+      }
+      const vchProdSelect = document.getElementById('vch-product');
+      if (vchProdSelect && pid) {
+        vchProdSelect.value = pid;
+        vchProdSelect.dispatchEvent(new Event('change'));
+      }
+    });
+  });
+
+  // Bind Export PDF Report
+  const pdfBtn = document.getElementById('analytics-export-pdf-btn');
+  if (pdfBtn) {
+    pdfBtn.addEventListener('click', () => {
+      const pdfBytes = buildAnalyticsPdfBytes(report);
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const slug = String(report.period.label || 'monthly-report')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-');
+      a.href = url;
+      a.download = `lillia-rowena-analytics-${slug}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      showAdminBanner(`Downloaded PDF Report for ${report.period.label}.`);
+    });
+  }
+
+  // Bind Export CSV Report
+  const csvBtn = document.getElementById('analytics-export-csv-btn');
+  if (csvBtn) {
+    csvBtn.addEventListener('click', () => {
+      const csvText = buildAnalyticsCsvContent(report);
+      const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const slug = String(report.period.label || 'monthly-report')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-');
+      a.href = url;
+      a.download = `lillia-rowena-analytics-${slug}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      showAdminBanner(`Exported CSV Report for ${report.period.label}.`);
+    });
+  }
+
+  // Bind Printable Report
+  const printBtn = document.getElementById('analytics-print-report-btn');
+  if (printBtn) {
+    printBtn.addEventListener('click', () => {
+      window.print();
     });
   }
 }
@@ -6702,7 +8716,7 @@ function initCatalogPage() {
       state.catalogPageSpotlightProductId = '';
       state.catalogPageSearchQuery = '';
       if (priceSlider) priceSlider.value = '5500';
-      if (priceDisplay) priceDisplay.textContent = '$5,500';
+      if (priceDisplay) priceDisplay.textContent = '₱5,500';
       if (topSearch) topSearch.value = '';
       syncClear('');
       syncCatalogUrlParams();
@@ -6713,6 +8727,9 @@ function initCatalogPage() {
   bindCartDrawerAndVoucher();
   renderCatalogPage();
   renderCartDrawer();
+  if (state.catalogPageSpotlightProductId) {
+    openProductDetailModal(state.catalogPageSpotlightProductId);
+  }
 }
 
 function renderCatalogPage() {
@@ -6891,10 +8908,10 @@ function renderCatalogPage() {
     <div class="flex flex-wrap items-center justify-between gap-2 pb-4 mb-4 border-b border-[#BCE3FF]">
     <div class="flex items-center gap-2">
     <span class="px-2.5 py-1 rounded-md bg-[#0095FF] text-white font-mono-tech text-[11px] font-bold">
-                Selected from Homepage
+                Product Details &amp; Customization
     </span>
     <span class="font-mono-tech text-xs text-[#475569]">
-                ${esc(spotlightItem.sku)} · ${esc(spotlightItem.categoryName)}
+                ${esc(spotlightItem.categoryName)}
     </span>
     </div>
     <button type="button" id="catalog-close-spotlight-btn" class="text-xs font-semibold text-[#475569] hover:text-[#0D1015] cursor-pointer">
@@ -7037,92 +9054,13 @@ function renderCatalogPage() {
           state.selectedColorByProduct[item.id] = matchedVariant.name;
         }
       }
-      const selectedFinish =
-        state.selectedColorByProduct[item.id] || item.colorVariants?.[0]?.name || item.defaultFinish;
-      const display = formatCustomerProductDisplay(item, selectedFinish);
-      const variants = item.colorVariants || [];
       const isSpotlighted = state.catalogPageSpotlightProductId === item.id;
-
-      return `
-    <article data-testid="catalog-product-card-${esc(item.id)}" class="group rounded-2xl bg-white border ${ isSpotlighted ? 'border-[#0095FF] ring-2' : 'border-[#E2E8F0] hover:border-[#0095FF]' } overflow-hidden shadow-2xs hover:shadow-xl transition-all flex flex-col justify-between">
-    <div>
-    <div class="aspect-[4/3] relative overflow-hidden bg-slate-100">
-    <img src="${esc(display.image)}" alt="${esc(display.name)}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-    <div class="absolute top-3 left-3 flex flex-wrap gap-1.5">
-    <span class="px-2.5 py-1 rounded-md bg-white/95 text-[#0D1015] font-mono-tech text-[10px] font-bold uppercase tracking-wider shadow-2xs">
-                  ${esc(display.categoryName)}
-    </span>
-                ${
-                  matchedColorDef
-                    ? `<span class="px-2.5 py-1 rounded-md bg-[#0095FF] text-white font-mono-tech text-[10px] font-bold uppercase tracking-wider">
-                        ✓ ${esc(matchedColorDef.label)}
-    </span>`
-                    : ''
-                }
-    </div>
-    <div class="absolute bottom-3 right-3">
-    <span class="px-2.5 py-1 rounded-md bg-[#0D1015]/90 text-white font-mono-tech text-xs font-bold">
-                  ${usd(display.effectivePrice)}
-    </span>
-    </div>
-    </div>
-
-    <div class="p-5 space-y-3">
-    <div class="text-center border-b border-[#E2E8F0] pb-3">
-    <h3 class="font-serif-display text-base sm:text-lg font-bold text-[#0D1015] uppercase tracking-wide leading-snug">
-                  ${esc(display.name)}
-    </h3>
-    <p class="font-mono-tech text-[11px] text-[#64748B] uppercase tracking-widest mt-0.5">
-                  ${variants.length} COLOR FINISHES · ${esc(display.selectedFinish)}
-    </p>
-    </div>
-
-    <div class="space-y-1.5">
-    <div class="flex items-center justify-between text-[11px]">
-    <span class="font-semibold text-[#0D1015] truncate">Finish: <span class="text-[#0077CC]">${esc(display.selectedFinish)}</span></span>
-    <span class="font-mono-tech font-bold text-[#0095FF] shrink-0">${usd(display.effectivePrice)}</span>
-    </div>
-    <div class="flex flex-wrap items-center gap-1.5">
-                  ${variants
-                    .map((v) => {
-                      const isSel = v.name === display.selectedFinish;
-                      return `
-    <button type="button" data-catalog-card-color-product="${esc(item.id)}" data-catalog-card-color-name="${esc(v.name)}" class="px-2 py-1 rounded-md text-[11px] font-medium border flex items-center gap-1.5 cursor-pointer transition-all ${ isSel ? 'bg-[#0D1015] text-white border-[#0D1015]' : 'bg-[#F8FBFF] text-[#0D1015] border-[#BCE3FF] hover:border-[#0095FF]' }">
-    <span class="w-3 h-3 rounded-full border border-black/20 shrink-0" style="background-color: ${esc(v.hex)}"></span>
-    <span class="truncate max-w-[115px]">${esc(v.name.split('/')[0].trim())}</span>
-    </button>
-                      `;
-                    })
-                    .join('')}
-    </div>
-    </div>
-    </div>
-    </div>
-
-    <div class="px-5 pb-5 pt-1 grid grid-cols-2 gap-2">
-    <button type="button" data-add-cart="${esc(item.id)}" ${display.isOutOfStock ? 'disabled' : ''} class="py-2.5 px-3 rounded-xl text-xs font-semibold transition-colors ${ display.isOutOfStock ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-[#0095FF] hover:bg-[#0077CC] text-white cursor-pointer' }">
-              ${display.isOutOfStock ? 'Out of Stock' : 'Add to Cart'}
-    </button>
-    <button type="button" data-view-product="${esc(item.id)}" class="py-2.5 px-3 rounded-xl bg-[#F0F8FF] hover:bg-[#D8EEFF] text-[#0D1015] border border-[#BCE3FF] text-xs font-semibold transition-colors cursor-pointer text-center">
-              View Details
-    </button>
-    </div>
-    </article>
-      `;
+      return renderSimplifiedProductCard(item, {
+        isSpotlighted,
+        cardTestId: `catalog-product-card-${item.id}`,
+      });
     })
     .join('');
-
-  // Bind card color swatches
-  grid.querySelectorAll('[data-catalog-card-color-product]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const pid = btn.getAttribute('data-catalog-card-color-product');
-      const cname = btn.getAttribute('data-catalog-card-color-name');
-      if (pid && cname) {
-        state.selectedColorByProduct[pid] = cname;
-        renderCatalogPage();
-      }
-    });
-  });
 
   bindStorefrontProductButtons(document);
 }

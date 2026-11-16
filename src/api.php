@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../config/bootstrap.php';
 
+use App\Models\AnalyticsReport;
 use App\Models\Product;
 use App\Models\User;
 use Library\Database;
@@ -22,6 +23,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
 $db = Database::getInstance();
 $productModel = new Product($db);
+$analyticsModel = new AnalyticsReport($db, $productModel);
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 
 try {
@@ -62,6 +64,12 @@ try {
         $store = $db->readStore();
 
         switch ($action) {
+            case 'get_analytics_report':
+                $filterInput = isset($payload['filter']) && is_array($payload['filter']) ? $payload['filter'] : $payload;
+                $report = $analyticsModel->generateReport($filterInput);
+                echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+                exit;
+
             case 'create_voucher':
                 $voucherInput = isset($payload['voucher']) && is_array($payload['voucher']) ? $payload['voucher'] : $payload;
                 $createdVoucher = $productModel->createVoucher($voucherInput);
@@ -299,21 +307,25 @@ try {
                     $expectedRole
                 );
                 $store = $db->readStore();
+                $avatarUrl = (string) ($authenticated['avatar'] ?? '');
                 $sessionObj = [
-                    'email' => $authenticated['email'],
-                    'name'  => $authenticated['fullName'] ?? $authenticated['name'] ?? $authenticated['email'],
-                    'role'  => $expectedRole === 'Admin' ? 'admin' : 'client',
+                    'email'  => $authenticated['email'],
+                    'name'   => $authenticated['fullName'] ?? $authenticated['name'] ?? $authenticated['email'],
+                    'role'   => $expectedRole === 'Admin' ? 'admin' : 'client',
+                    'avatar' => $avatarUrl,
                 ];
                 $_SESSION['user'] = $sessionObj;
                 $store['sessionUser'] = $sessionObj;
                 if ($expectedRole === 'Customer') {
+                    $isDemoRowena = strtolower((string) $authenticated['email']) === 'rowena.vance@vancearchitects.com';
                     $store['customerProfile'] = [
                         'name'    => $sessionObj['name'],
                         'email'   => $authenticated['email'],
-                        'phone'   => (string) ($authenticated['phoneNumber'] ?? $authenticated['phone'] ?? '+1 (212) 555-0148'),
-                        'city'    => 'New York, NY 10013',
-                        'address' => (string) ($authenticated['address'] ?? 'Suite 400, 118 Mercer St, SoHo'),
-                        'notes'   => 'Standard white-glove delivery instructions.',
+                        'phone'   => (string) ($authenticated['phoneNumber'] ?? $authenticated['phone'] ?? ''),
+                        'city'    => (string) ($authenticated['city'] ?? ($isDemoRowena ? 'New York, NY 10013' : '')),
+                        'address' => (string) ($authenticated['address'] ?? ''),
+                        'notes'   => (string) ($authenticated['notes'] ?? ($isDemoRowena ? 'Freight elevator available Mon–Fri 9:00 AM – 5:00 PM. Please call 30 minutes before arrival.' : '')),
+                        'avatar'  => $avatarUrl,
                     ];
                 }
                 $db->writeStore($store);
@@ -330,25 +342,29 @@ try {
                 $registered = $userModel->register([
                     'fullName'    => $payload['fullName'] ?? $payload['name'] ?? '',
                     'email'       => $payload['email'] ?? '',
-                    'password'    => $payload['password'] ?? 'ClientPass2025!',
-                    'phoneNumber' => $payload['phoneNumber'] ?? '+1 (212) 555-0148',
-                    'address'     => $payload['address'] ?? 'Suite 400, 118 Mercer St, SoHo',
+                    'password'    => $payload['password'] ?? '',
+                    'phoneNumber' => $payload['phoneNumber'] ?? '',
+                    'address'     => $payload['address'] ?? '',
                 ]);
                 $store = $db->readStore();
                 $sessionObj = [
-                    'email' => $registered['email'],
-                    'name'  => $registered['fullName'],
-                    'role'  => 'client',
+                    'email'  => $registered['email'],
+                    'name'   => $registered['fullName'],
+                    'role'   => 'client',
+                    'avatar' => '',
                 ];
                 $_SESSION['user'] = $sessionObj;
+                $_SESSION['cartItems'] = [];
                 $store['sessionUser'] = $sessionObj;
+                $store['cartItems'] = [];
                 $store['customerProfile'] = [
                     'name'    => $registered['fullName'],
                     'email'   => $registered['email'],
-                    'phone'   => $registered['phoneNumber'] ?: '+1 (212) 555-0148',
-                    'city'    => 'New York, NY 10013',
-                    'address' => $registered['address'] ?: 'Suite 400, 118 Mercer St, SoHo',
-                    'notes'   => 'Standard white-glove delivery instructions.',
+                    'phone'   => (string) ($registered['phoneNumber'] ?? ''),
+                    'city'    => '',
+                    'address' => (string) ($registered['address'] ?? ''),
+                    'notes'   => '',
+                    'avatar'  => '',
                 ];
                 $db->writeStore($store);
                 echo json_encode([
@@ -356,6 +372,40 @@ try {
                     'customer'       => $registered,
                     'sessionUser'    => $sessionObj,
                     'mysqlConnected' => $db->isMySqlConnected(),
+                ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+                exit;
+
+            case 'upload_product_image':
+                $dataUrl = trim((string) ($payload['dataUrl'] ?? ''));
+                $rawFileName = trim((string) ($payload['fileName'] ?? 'product.jpg'));
+                if (!preg_match('/^data:image\/(jpeg|jpg|png|webp|gif);base64,(.+)$/i', $dataUrl, $matches)) {
+                    throw new \InvalidArgumentException('Invalid image format. Please upload a JPG, PNG, WEBP, or GIF image.');
+                }
+                $ext = strtolower($matches[1]) === 'jpeg' ? 'jpg' : strtolower($matches[1]);
+                $binary = base64_decode($matches[2], true);
+                if ($binary === false || $binary === '') {
+                    throw new \InvalidArgumentException('Could not decode uploaded image data.');
+                }
+                $baseName = pathinfo($rawFileName, PATHINFO_FILENAME);
+                $safeSlug = preg_replace('/[^a-z0-9_-]+/i', '_', $baseName) ?: 'product';
+                $safeSlug = trim($safeSlug, '_');
+                $targetDir = dirname(__DIR__) . '/assets/images';
+                if (!is_dir($targetDir)) {
+                    @mkdir($targetDir, 0775, true);
+                }
+                $finalName = $safeSlug . '.' . $ext;
+                $targetPath = $targetDir . '/' . $finalName;
+                if (file_exists($targetPath)) {
+                    $finalName = $safeSlug . '_' . time() . '.' . $ext;
+                    $targetPath = $targetDir . '/' . $finalName;
+                }
+                if (@file_put_contents($targetPath, $binary) === false) {
+                    throw new \RuntimeException('Failed to write image to assets/images/.');
+                }
+                $relativePath = 'assets/images/' . $finalName;
+                echo json_encode([
+                    'ok'        => true,
+                    'imagePath' => $relativePath,
                 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
                 exit;
 

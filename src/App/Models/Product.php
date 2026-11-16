@@ -71,7 +71,7 @@ class Product
             throw new ValidationException('Product image is required when adding or editing a product.');
         }
         if ($price < 50.0) {
-            throw new ValidationException('Base Price must be at least $50.');
+            throw new ValidationException('Base Price must be at least ₱50.');
         }
 
         $isCustomized = ($rawType === 'customized' || $rawType === 'messenger');
@@ -79,7 +79,8 @@ class Product
         $origin = $isCustomized ? 'Messenger customization' : 'Admin';
 
         return [
-            'id'                      => (string) ($input['id'] ?? ($isCustomized ? 'furn-cust-' : 'furn-std-') . time()),
+            'id'                      => (string) ($input['id'] ?? ($isCustomized ? 'furn-cust-' : 'furn-std-') . strtolower($sku)),
+            'productId'               => $sku,
             'sku'                     => $sku,
             'name'                    => $name,
             'image'                   => $image,
@@ -237,14 +238,14 @@ class Product
 
         $discountAmount = round((float) ($input['discountAmount'] ?? $input['discountValue'] ?? 0), 2);
         if ($discountAmount <= 0) {
-            throw new ValidationException('Discount Amount ($) must be greater than $0.');
+            throw new ValidationException('Discount Amount (₱) must be greater than ₱0.');
         }
 
         $maxProductPrice = (float) ($matchedProduct['effectivePrice'] ?? $matchedProduct['price'] ?? 0);
         if ($maxProductPrice > 0 && $discountAmount > $maxProductPrice) {
             throw new ValidationException(
                 sprintf(
-                    'Discount Amount ($%s) cannot exceed the eligible product\'s price ($%s for %s).',
+                    'Discount Amount (₱%s) cannot exceed the eligible product\'s price (₱%s for %s).',
                     number_format($discountAmount, 0),
                     number_format($maxProductPrice, 0),
                     (string) ($matchedProduct['name'] ?? 'Selected Product')
@@ -299,9 +300,11 @@ class Product
         $defaultName = ucwords(str_replace(['.', '_', '-'], ' ', $emailPrefix));
         $customerName = trim((string) ($input['customerName'] ?? '')) ?: $defaultName;
         $issuedByAdmin = trim((string) ($input['issuedByAdmin'] ?? '')) ?: 'Lillia Mercier';
+        $voucherId = strtoupper(trim((string) ($input['voucherId'] ?? ('VCH-LR-' . (100 + (abs((int) crc32($code)) % 899))))));
 
         $voucher = [
             'id'               => (string) ($input['id'] ?? ('vch-' . (int) round(microtime(true) * 1000))),
+            'voucherId'        => $voucherId,
             'code'             => $code,
             'customerEmail'    => $customerEmail,
             'customerName'     => $customerName,

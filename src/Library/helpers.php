@@ -53,7 +53,7 @@ if (!function_exists('formatCurrency')) {
      */
     function formatCurrency(float|int|string $amount): string
     {
-        return '$' . number_format((float) $amount, 0);
+        return '₱' . number_format((float) $amount, 0);
     }
 }
 

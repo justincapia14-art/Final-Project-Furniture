@@ -14,6 +14,7 @@ import {
   revokeVoucherInList,
   validateVoucherForOrder,
   calculateOrderPricing,
+  computeMonthlyAnalyticsReport,
 } from './assets/js/store.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -140,6 +141,13 @@ function handleApiRequest(req, res, parsedUrl) {
           const store = readStoreFile();
 
           switch (action) {
+            case 'get_analytics_report': {
+              const filterInput =
+                payload.filter && typeof payload.filter === 'object' ? payload.filter : payload;
+              const report = computeMonthlyAnalyticsReport(store, filterInput, Date.now());
+              return sendJson(res, 200, { ok: true, report });
+            }
+
             case 'create_voucher': {
               const voucherInput =
                 payload.voucher && typeof payload.voucher === 'object' ? payload.voucher : payload;
@@ -375,19 +383,23 @@ function handleApiRequest(req, res, parsedUrl) {
               }
 
               const fullName = matchedCustomer.fullName || matchedCustomer.name || email;
+              const avatarUrl = matchedCustomer.avatar || '';
+              const isDemoRowena = email === 'rowena.vance@vancearchitects.com';
               const sessionUser = {
                 email: matchedCustomer.email,
                 name: fullName,
                 role: 'client',
+                avatar: avatarUrl,
               };
               store.sessionUser = sessionUser;
               store.customerProfile = {
                 name: fullName,
                 email: matchedCustomer.email,
-                phone: matchedCustomer.phoneNumber || matchedCustomer.phone || '+1 (212) 555-0148',
-                city: 'New York, NY 10013',
-                address: matchedCustomer.address || 'Suite 400, 118 Mercer St, SoHo',
-                notes: 'Standard white-glove delivery instructions.',
+                phone: matchedCustomer.phoneNumber || matchedCustomer.phone || '',
+                city: matchedCustomer.city ?? (isDemoRowena ? 'New York, NY 10013' : ''),
+                address: matchedCustomer.address || '',
+                notes: matchedCustomer.notes ?? (isDemoRowena ? 'Freight elevator available Mon–Fri 9:00 AM – 5:00 PM. Please call 30 minutes before arrival.' : ''),
+                avatar: avatarUrl,
               };
               writeStoreFile(store);
               return sendJson(res, 200, { ok: true, customer: matchedCustomer, sessionUser });
@@ -397,7 +409,7 @@ function handleApiRequest(req, res, parsedUrl) {
               const customers = Array.isArray(store.customers) ? [...store.customers] : [];
               const email = String(payload.email || '').trim().toLowerCase();
               const fullName = String(payload.fullName || payload.name || '').trim();
-              const password = String(payload.password || 'ClientPass2025!');
+              const password = String(payload.password || '');
               const existingIdx = customers.findIndex(
                 (c) => String(c.email || '').toLowerCase() === email
               );
@@ -407,16 +419,23 @@ function handleApiRequest(req, res, parsedUrl) {
                   error: 'An account with this email already exists.',
                 });
               }
+              const phoneVal = String(payload.phoneNumber || '').trim();
+              const addressVal = String(payload.address || '').trim();
+              const generatedCustomerId = `LR-CUS-${Math.floor(320 + Math.random() * 679)}`;
               const customerRecord = {
-                id: customers.length + 10,
+                id: generatedCustomerId,
+                customerId: generatedCustomerId,
                 role: 'Customer',
                 fullName,
                 name: fullName,
                 email,
                 passwordPlain: password,
-                phoneNumber: payload.phoneNumber || '+1 (212) 555-0148',
-                phone: payload.phoneNumber || '+1 (212) 555-0148',
-                address: payload.address || 'Suite 400, 118 Mercer St, SoHo',
+                phoneNumber: phoneVal,
+                phone: phoneVal,
+                address: addressVal,
+                city: '',
+                notes: '',
+                avatar: '',
               };
               customers.push(customerRecord);
               store.customers = customers;
@@ -424,18 +443,48 @@ function handleApiRequest(req, res, parsedUrl) {
                 email: customerRecord.email,
                 name: customerRecord.fullName,
                 role: 'client',
+                avatar: '',
               };
               store.sessionUser = sessionUser;
+              store.cartItems = [];
               store.customerProfile = {
                 name: customerRecord.fullName,
                 email: customerRecord.email,
                 phone: customerRecord.phoneNumber,
-                city: 'New York, NY 10013',
+                city: '',
                 address: customerRecord.address,
-                notes: 'Standard white-glove delivery instructions.',
+                notes: '',
+                avatar: '',
               };
               writeStoreFile(store);
               return sendJson(res, 200, { ok: true, customer: customerRecord, sessionUser });
+            }
+
+            case 'upload_product_image': {
+              const dataUrl = String(payload.dataUrl || '').trim();
+              const rawFileName = String(payload.fileName || 'product.jpg').trim();
+              const match = dataUrl.match(/^data:image\/(jpeg|jpg|png|webp|gif);base64,(.+)$/i);
+              if (!match) {
+                return sendJson(res, 400, {
+                  ok: false,
+                  error: 'Invalid image format. Please upload a JPG, PNG, WEBP, or GIF image.',
+                });
+              }
+              const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
+              const buffer = Buffer.from(match[2], 'base64');
+              const baseName = path.basename(rawFileName, path.extname(rawFileName));
+              const safeSlug = baseName.replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'product';
+              const targetDir = path.join(__dirname, 'assets', 'images');
+              fs.mkdirSync(targetDir, { recursive: true });
+              let finalName = `${safeSlug}.${ext}`;
+              let targetPath = path.join(targetDir, finalName);
+              if (fs.existsSync(targetPath)) {
+                finalName = `${safeSlug}_${Date.now()}.${ext}`;
+                targetPath = path.join(targetDir, finalName);
+              }
+              fs.writeFileSync(targetPath, buffer);
+              const relativePath = `assets/images/${finalName}`;
+              return sendJson(res, 200, { ok: true, imagePath: relativePath });
             }
 
             default:

@@ -50,9 +50,15 @@
             data-switch-client-tab="home"
             aria-label="My Account"
             title="My Account"
-            class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-[#0095FF] text-[#BCE3FF] hover:text-white border border-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+            class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-[#0095FF] text-[#BCE3FF] hover:text-white border border-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0 overflow-hidden"
           >
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <img
+              id="portal-header-avatar-img"
+              src=""
+              alt="Customer profile picture"
+              class="hidden w-full h-full object-cover"
+            />
+            <svg id="portal-header-default-icon" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
             </svg>
@@ -85,19 +91,34 @@
             <aside class="lg:col-span-3 bg-white rounded-3xl border border-[#BCE3FF] p-5 sm:p-6 space-y-6 shadow-2xs lg:sticky lg:top-24">
               <!-- Customer Profile Summary -->
               <div class="flex items-center gap-3.5 pb-5 border-b border-[#E2E8F0]">
-                <div
-                  id="client-sidebar-initials"
-                  class="w-11 h-11 rounded-2xl bg-[#0B0F17] text-[#BCE3FF] font-serif-display text-base font-bold flex items-center justify-center shrink-0"
+                <button
+                  type="button"
+                  data-switch-client-tab="address"
+                  title="Change Profile Picture"
+                  class="relative w-12 h-12 rounded-2xl bg-[#0B0F17] text-[#BCE3FF] font-serif-display text-base font-bold flex items-center justify-center shrink-0 overflow-hidden border border-[#BCE3FF]/40 cursor-pointer group"
                 >
-                  RV
-                </div>
-                <div class="min-w-0">
+                  <img
+                    id="client-sidebar-avatar-img"
+                    src=""
+                    alt="Customer profile picture"
+                    class="hidden w-full h-full object-cover"
+                  />
+                  <span id="client-sidebar-initials">RV</span>
+                </button>
+                <div class="min-w-0 flex-1">
                   <p id="client-sidebar-name" class="font-serif-display text-base font-bold text-[#0D1015] truncate">
                     Rowena Vance
                   </p>
                   <p id="client-sidebar-email" class="font-mono-tech text-xs text-[#64748B] truncate">
                     rowena.vance@vancearchitects.com
                   </p>
+                  <button
+                    type="button"
+                    data-switch-client-tab="address"
+                    class="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-[#0095FF] hover:text-[#0077CC] cursor-pointer"
+                  >
+                    <span>Change Profile Picture</span>
+                  </button>
                 </div>
               </div>
 
@@ -146,6 +167,7 @@
                     <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
                     <span>Transactions</span>
                   </span>
+                  <span id="sidebar-badge-transactions" class="font-mono-tech text-xs opacity-80">0</span>
                 </button>
 
                 <button
@@ -210,16 +232,32 @@
                     style="background-image: radial-gradient(circle at 85% 20%, rgba(0, 149, 255, 0.4), transparent 55%);"
                   ></div>
                   <div class="relative flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-                    <div class="space-y-2">
-                      <p class="text-xs font-semibold text-[#BCE3FF]">
-                        Customer Account Overview
-                      </p>
-                      <h1 class="font-serif-display text-3xl sm:text-4xl font-bold text-white">
-                        Welcome back, <span id="client-welcome-name">Rowena Vance</span>!
-                      </h1>
-                      <p class="text-sm text-slate-300 max-w-xl">
-                        Signed in as <span id="client-welcome-email" class="font-mono-tech text-[#BCE3FF]">rowena.vance@vancearchitects.com</span>. Manage your furniture orders, shipping address, transactions, shopping cart, and personal Messenger vouchers from the menu on the left.
-                      </p>
+                    <div class="flex items-start sm:items-center gap-4">
+                      <button
+                        type="button"
+                        data-switch-client-tab="address"
+                        title="Edit Profile Picture"
+                        class="w-16 h-16 rounded-2xl bg-slate-800 border-2 border-[#0095FF] text-[#BCE3FF] font-serif-display text-xl font-bold flex items-center justify-center shrink-0 overflow-hidden cursor-pointer"
+                      >
+                        <img
+                          id="client-welcome-avatar-img"
+                          src=""
+                          alt="Customer profile picture"
+                          class="hidden w-full h-full object-cover"
+                        />
+                        <span id="client-welcome-avatar-initials">RV</span>
+                      </button>
+                      <div class="space-y-2">
+                        <p class="text-xs font-semibold text-[#BCE3FF]">
+                          Customer Account Overview
+                        </p>
+                        <h1 class="font-serif-display text-3xl sm:text-4xl font-bold text-white">
+                          Welcome back, <span id="client-welcome-name">Rowena Vance</span>!
+                        </h1>
+                        <p class="text-sm text-slate-300 max-w-xl">
+                          Signed in as <span id="client-welcome-email" class="font-mono-tech text-[#BCE3FF]">rowena.vance@vancearchitects.com</span>. Manage your furniture orders, shipping address, transactions, shopping cart, and personal Messenger vouchers from the menu on the left.
+                        </p>
+                      </div>
                     </div>
 
                     <div class="flex flex-wrap items-center gap-3 shrink-0">
@@ -398,6 +436,49 @@
                   </div>
 
                   <form id="client-address-form" class="space-y-5">
+                    <!-- Customer Profile Picture Uploader -->
+                    <div class="p-4 sm:p-5 rounded-2xl bg-[#F8FBFF] border border-[#BCE3FF] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div class="flex items-center gap-4">
+                        <div class="w-16 h-16 rounded-2xl bg-[#0B0F17] text-[#BCE3FF] font-serif-display text-xl font-bold flex items-center justify-center shrink-0 overflow-hidden border border-[#BCE3FF]">
+                          <img
+                            id="client-profile-avatar-preview"
+                            src=""
+                            alt="Profile picture preview"
+                            class="hidden w-full h-full object-cover"
+                          />
+                          <span id="client-profile-avatar-initials">RV</span>
+                        </div>
+                        <div class="space-y-1">
+                          <p class="text-sm font-bold text-[#0D1015]">Profile Picture</p>
+                          <p class="text-xs text-[#64748B]">
+                            Upload a JPG, PNG, or WEBP photo from your device to personalize your account profile.
+                          </p>
+                          <input id="client-input-avatar" type="hidden" value="" />
+                        </div>
+                      </div>
+                      <div class="flex flex-wrap items-center gap-2.5 shrink-0">
+                        <label
+                          for="client-profile-avatar-file"
+                          class="px-4 py-2.5 rounded-xl bg-[#0095FF] hover:bg-[#0077CC] text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                        >
+                          Upload Photo
+                        </label>
+                        <input
+                          id="client-profile-avatar-file"
+                          type="file"
+                          accept="image/*"
+                          class="sr-only"
+                        />
+                        <button
+                          type="button"
+                          id="client-profile-avatar-clear-btn"
+                          class="px-3.5 py-2.5 rounded-xl bg-white hover:bg-rose-50 text-[#475569] hover:text-rose-600 border border-[#CBD5E1] hover:border-rose-200 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                        >
+                          Remove Photo
+                        </button>
+                      </div>
+                    </div>
+
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
                       <div>
                         <label for="client-input-name" class="block text-xs font-bold text-[#0D1015] mb-1.5">Full Name</label>
@@ -486,25 +567,25 @@
                 <div class="bg-white rounded-3xl border border-[#BCE3FF] p-6 sm:p-8 space-y-6 shadow-2xs">
                   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-[#E2E8F0]">
                     <div>
-                      <h2 class="font-serif-display text-2xl font-bold text-[#0D1015]">Transactions &amp; Payment History</h2>
+                      <h2 class="font-serif-display text-2xl font-bold text-[#0D1015]">Completed Transactions</h2>
                       <p class="text-xs text-[#475569] mt-1">
-                        Complete record of your furniture payments, applied Messenger vouchers, and white-glove delivery invoices.
+                        Official record of your completed furniture orders confirmed by the Admin.
                       </p>
                     </div>
                     <div class="text-left sm:text-right">
-                      <p class="text-xs text-[#64748B]">Total Commissioned Volume</p>
-                      <p id="client-transactions-total" class="font-mono-tech text-2xl font-bold text-[#0095FF]">$8,061</p>
+                      <p class="text-xs text-[#64748B]">Total Completed Volume</p>
+                      <p id="client-transactions-total" class="font-mono-tech text-2xl font-bold text-[#0095FF]">₱0</p>
                     </div>
                   </div>
 
                   <div class="overflow-x-auto">
-                    <table class="admin-table">
+                    <table class="admin-table" data-testid="client-transactions-table">
                       <thead>
                         <tr>
-                          <th>Reference</th>
-                          <th>Date</th>
-                          <th>Product</th>
-                          <th>Method</th>
+                          <th>Transaction Ref</th>
+                          <th>Order #</th>
+                          <th>Completed Date</th>
+                          <th>Product &amp; Finish</th>
                           <th>Status</th>
                           <th class="text-right">Amount</th>
                         </tr>
@@ -526,20 +607,6 @@
                       Review selected furniture pieces, adjust quantities, apply a single-product Messenger voucher, or complete your order.
                     </p>
                   </div>
-                  <div class="flex flex-wrap items-center gap-2.5">
-                    <select
-                      id="client-cart-add-select"
-                      aria-label="Select a furniture piece to add to cart"
-                      class="px-3.5 py-2.5 rounded-xl bg-[#F8FBFF] border border-[#BCE3FF] text-xs font-medium text-[#0D1015]"
-                    ></select>
-                    <button
-                      type="button"
-                      id="client-cart-add-btn"
-                      class="px-4 py-2.5 rounded-xl bg-[#0095FF] hover:bg-[#0077CC] text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
-                    >
-                      + Add to Cart
-                    </button>
-                  </div>
                 </div>
 
                 <!-- Empty Cart State -->
@@ -550,7 +617,7 @@
                   <div class="space-y-1.5 max-w-md mx-auto">
                     <p class="font-serif-display text-xl font-bold text-[#0D1015]">Your Shopping Cart is Empty</p>
                     <p class="text-xs text-[#475569]">
-                      Use the catalog selector above or browse our showroom collection to add handcrafted furniture pieces to your cart.
+                      Browse our showroom collection to add handcrafted furniture pieces to your cart.
                     </p>
                   </div>
                   <div class="flex flex-wrap items-center justify-center gap-3 pt-1">
@@ -606,19 +673,19 @@
                     <div class="space-y-2.5 pt-3 border-t border-[#E2E8F0] text-xs sm:text-sm">
                       <div class="flex items-center justify-between text-[#475569]">
                         <span>Furniture Subtotal</span>
-                        <span id="client-cart-subtotal" class="font-mono-tech font-bold text-[#0D1015]">$0</span>
+                        <span id="client-cart-subtotal" class="font-mono-tech font-bold text-[#0D1015]">₱0</span>
                       </div>
                       <div id="client-cart-voucher-row" class="hidden items-center justify-between text-emerald-700 font-semibold">
                         <span>Messenger Voucher Discount</span>
-                        <span id="client-cart-voucher-discount" class="font-mono-tech">-$0</span>
+                        <span id="client-cart-voucher-discount" class="font-mono-tech">-₱0</span>
                       </div>
                       <div class="flex items-center justify-between text-[#475569]">
                         <span>White-Glove Delivery</span>
-                        <span id="client-cart-delivery" class="font-mono-tech font-bold text-[#0D1015]">$150</span>
+                        <span id="client-cart-delivery" class="font-mono-tech font-bold text-[#0D1015]">₱150</span>
                       </div>
                       <div class="flex items-center justify-between pt-3 border-t border-[#E2E8F0] text-base font-bold text-[#0D1015]">
                         <span>Total</span>
-                        <span id="client-cart-total" class="font-mono-tech text-xl text-[#0095FF]">$0</span>
+                        <span id="client-cart-total" class="font-mono-tech text-xl text-[#0095FF]">₱0</span>
                       </div>
                     </div>
 
@@ -795,6 +862,17 @@
                   <span id="admin-nav-count-vouchers" class="admin-nav-count">3</span>
                 </button>
 
+                <button
+                  type="button"
+                  data-admin-tab="analytics"
+                  class="admin-tab-btn admin-nav-item"
+                >
+                  <span class="admin-nav-item-label">
+                    <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
+                    <span>Analytics &amp; Reports</span>
+                  </span>
+                </button>
+
                 <a
                   href="index.html"
                   class="admin-nav-item"
@@ -873,7 +951,7 @@
                 </div>
                 <div class="admin-summary-card admin-summary-card-blue">
                   <p class="admin-summary-label text-[#0077CC]">Total Revenue</p>
-                  <p id="admin-stat-revenue" class="admin-summary-value text-[#0095FF]">$22,005</p>
+                  <p id="admin-stat-revenue" class="admin-summary-value text-[#0095FF]">₱22,005</p>
                   <p class="admin-summary-meta text-slate-600">Confirmed customer orders</p>
                 </div>
               </div>
@@ -930,8 +1008,8 @@
                     <input id="prod-name" type="text" required placeholder="e.g. Solid Walnut Dining Table" class="admin-input" />
                   </div>
                   <div>
-                    <label for="prod-sku" class="admin-label">SKU Code</label>
-                    <input id="prod-sku" type="text" required placeholder="e.g. LR-DN-120" class="admin-input font-mono-tech uppercase" />
+                    <label for="prod-sku" class="admin-label">Product Code (ProductID)</label>
+                    <input id="prod-sku" type="text" required placeholder="e.g. LR-LV-213" class="admin-input font-mono-tech uppercase" />
                   </div>
                   <div class="grid grid-cols-2 gap-2.5">
                     <div>
@@ -955,7 +1033,7 @@
 
                   <div class="grid grid-cols-2 gap-2.5">
                     <div>
-                      <label for="prod-price" class="admin-label">Base Price ($)</label>
+                      <label for="prod-price" class="admin-label">Base Price (₱)</label>
                       <input id="prod-price" type="number" min="50" required value="2850" class="admin-input font-mono-tech" />
                     </div>
                     <div>
@@ -1108,62 +1186,43 @@
                  ========================================================= -->
             <div id="admin-tab-vouchers" class="admin-tab-panel hidden space-y-5">
               <form id="admin-voucher-form" novalidate class="admin-card p-5 sm:p-6 space-y-5">
-                <div class="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-slate-200">
+                <div class="pb-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h2 class="text-base font-bold text-slate-900">
-                      Create Discount Voucher
+                      Create Fixed-Amount Discount Voucher
                     </h2>
                     <p class="text-xs text-slate-500 mt-0.5">
-                      Issue a fixed-amount ($), single-product discount voucher assigned to a specific customer email.
+                      Issue a single-product fixed peso discount code linked to a customer's email address with automatic Asia/Manila timestamping.
                     </p>
                   </div>
-                  <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#EBF6FF] border border-[#BCE3FF] text-[#0077CC] text-xs font-semibold">
-                    <span>Timezone: Asia/Manila (PHT)</span>
-                  </div>
+                  <span class="px-2.5 py-1 rounded-md bg-[#EBF6FF] border border-[#BCE3FF] text-[11px] font-bold text-[#0077CC]">
+                    Fixed Amount Only (₱) · Asia/Manila (PHT)
+                  </span>
                 </div>
 
                 <div id="admin-voucher-form-error" role="alert" class="hidden px-4 py-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold"></div>
 
-                <!-- Primary Voucher Details -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <label for="vch-email" class="admin-label">Customer Email <span class="text-rose-600">*</span></label>
-                    <input
-                      id="vch-email"
-                      type="email"
-                      required
-                      value="rowena.vance@vancearchitects.com"
-                      placeholder="customer@example.com"
-                      class="admin-input"
-                    />
+                    <input id="vch-email" type="email" required value="rowena.vance@vancearchitects.com" placeholder="customer@example.com" class="admin-input" />
                   </div>
                   <div>
                     <label for="vch-product" class="admin-label">Eligible Product <span class="text-rose-600">*</span></label>
-                    <select id="vch-product" required class="admin-select"></select>
+                    <select id="vch-product" class="admin-select"></select>
                   </div>
                   <div>
                     <label for="vch-code" class="admin-label">Voucher Code <span class="text-rose-600">*</span></label>
                     <div class="flex gap-2">
-                      <input
-                        id="vch-code"
-                        type="text"
-                        required
-                        placeholder="e.g. SAVE-300"
-                        class="admin-input font-mono-tech uppercase"
-                      />
-                      <button
-                        type="button"
-                        id="admin-generate-voucher-btn"
-                        class="admin-btn admin-btn-secondary shrink-0"
-                        title="Generate Voucher Code"
-                      >
+                      <input id="vch-code" type="text" required placeholder="e.g. SAVE-300" class="admin-input font-mono-tech uppercase" />
+                      <button type="button" id="admin-generate-voucher-btn" class="admin-btn admin-btn-secondary shrink-0">
                         Generate
                       </button>
                     </div>
                   </div>
                   <div>
                     <div class="flex items-center justify-between gap-1">
-                      <label id="vch-discount-label" for="vch-discount" class="admin-label">Discount Amount ($) <span class="text-rose-600">*</span></label>
+                      <label id="vch-discount-label" for="vch-discount" class="admin-label">Discount Amount (₱) <span class="text-rose-600">*</span></label>
                       <span id="vch-discount-max-hint" class="text-[11px] font-semibold text-[#0077CC]"></span>
                     </div>
                     <input
@@ -1295,6 +1354,11 @@
 
               <div id="admin-vouchers-list" class="space-y-4"></div>
             </div>
+
+            <!-- =========================================================
+                 PAGE 7: ANALYTICS & BUSINESS REPORTS
+                 ========================================================= -->
+            <div id="admin-tab-analytics" class="admin-tab-panel hidden space-y-6"></div>
           </div>
         </div>
 
