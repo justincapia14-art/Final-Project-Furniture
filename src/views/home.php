@@ -582,7 +582,7 @@ $sessionPayload = [
                     </div>
                     <div class="text-left sm:text-right">
                       <p class="text-xs text-[#64748B]">Total Completed Volume</p>
-                      <p id="client-transactions-total" class="font-mono-tech text-2xl font-bold text-[#0095FF]">₱0</p>
+                      <p id="client-transactions-total" class="font-mono-tech text-2xl font-bold text-[#0095FF]">$0</p>
                     </div>
                   </div>
 
@@ -679,19 +679,19 @@ $sessionPayload = [
                     <div class="space-y-2.5 pt-3 border-t border-[#E2E8F0] text-xs sm:text-sm">
                       <div class="flex items-center justify-between text-[#475569]">
                         <span>Furniture Subtotal</span>
-                        <span id="client-cart-subtotal" class="font-mono-tech font-bold text-[#0D1015]">₱0</span>
+                        <span id="client-cart-subtotal" class="font-mono-tech font-bold text-[#0D1015]">$0</span>
                       </div>
                       <div id="client-cart-voucher-row" class="hidden items-center justify-between text-emerald-700 font-semibold">
                         <span>Messenger Voucher Discount</span>
-                        <span id="client-cart-voucher-discount" class="font-mono-tech">-₱0</span>
+                        <span id="client-cart-voucher-discount" class="font-mono-tech">-$0</span>
                       </div>
                       <div class="flex items-center justify-between text-[#475569]">
                         <span>White-Glove Delivery</span>
-                        <span id="client-cart-delivery" class="font-mono-tech font-bold text-[#0D1015]">₱150</span>
+                        <span id="client-cart-delivery" class="font-mono-tech font-bold text-[#0D1015]">$150</span>
                       </div>
                       <div class="flex items-center justify-between pt-3 border-t border-[#E2E8F0] text-base font-bold text-[#0D1015]">
                         <span>Total</span>
-                        <span id="client-cart-total" class="font-mono-tech text-xl text-[#0095FF]">₱0</span>
+                        <span id="client-cart-total" class="font-mono-tech text-xl text-[#0095FF]">$0</span>
                       </div>
                     </div>
 
@@ -944,7 +944,7 @@ $sessionPayload = [
                 </div>
                 <div class="admin-summary-card admin-summary-card-blue">
                   <p class="admin-summary-label text-[#0077CC]">Total Revenue</p>
-                  <p id="admin-stat-revenue" class="admin-summary-value text-[#0095FF]">₱22,005</p>
+                  <p id="admin-stat-revenue" class="admin-summary-value text-[#0095FF]">$22,005</p>
                   <p class="admin-summary-meta text-slate-600">Confirmed customer orders</p>
                 </div>
               </div>
@@ -1022,7 +1022,7 @@ $sessionPayload = [
 
                   <div class="grid grid-cols-2 gap-2.5">
                     <div>
-                      <label for="prod-price" class="admin-label">Base Price (₱)</label>
+                      <label for="prod-price" class="admin-label">Base Price ($)</label>
                       <input id="prod-price" type="number" min="50" required value="2850" class="admin-input font-mono-tech" />
                     </div>
                     <div>
@@ -1173,11 +1173,11 @@ $sessionPayload = [
                       Create Fixed-Amount Discount Voucher
                     </h2>
                     <p class="text-xs text-slate-500 mt-0.5">
-                      Issue a single-product fixed peso discount code linked to a customer's email address with automatic Asia/Manila timestamping.
+                      Issue a single-product fixed dollar discount code linked to a customer's email address with automatic Asia/Manila timestamping.
                     </p>
                   </div>
                   <span class="px-2.5 py-1 rounded-md bg-[#EBF6FF] border border-[#BCE3FF] text-[11px] font-bold text-[#0077CC]">
-                    Fixed Amount Only (₱) · Asia/Manila (PHT)
+                    Fixed Amount Only ($) · Asia/Manila (PHT)
                   </span>
                 </div>
 
@@ -1203,7 +1203,7 @@ $sessionPayload = [
                   </div>
                   <div>
                     <div class="flex items-center justify-between gap-1">
-                      <label id="vch-discount-label" for="vch-discount" class="admin-label">Discount Amount (₱) <span class="text-rose-600">*</span></label>
+                      <label id="vch-discount-label" for="vch-discount" class="admin-label">Discount Amount ($) <span class="text-rose-600">*</span></label>
                       <span id="vch-discount-max-hint" class="text-[11px] font-semibold text-[#0077CC]"></span>
                     </div>
                     <input

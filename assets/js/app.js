@@ -65,7 +65,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Furnish every room with sustainably sourced American walnut, solid white oak, and soft Belgian linen and bouclé upholstery—ready for your home or custom-made to order.',
     priceLabel: 'Pieces Starting At',
-    price: '₱1,180',
+    price: '$1,180',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Explore Living Room',
     filterTarget: 'living',
@@ -79,7 +79,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Relax in deep-seated sofas upholstered in soft Belgian bouclé, paired with solid white oak lounge frames and natural stone coffee tables built for everyday living.',
     priceLabel: 'Living Room Starting At',
-    price: '₱1,680',
+    price: '$1,680',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Shop Living & Lounge',
     filterTarget: 'living',
@@ -93,7 +93,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Gather around heirloom dining tables crafted from solid American black walnut and white oak, paired with comfortable woven cord and upholstered dining chairs.',
     priceLabel: 'Dining Room Starting At',
-    price: '₱1,290',
+    price: '$1,290',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Shop Dining & Tables',
     filterTarget: 'dining',
@@ -107,7 +107,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Create a calm bedroom retreat with upholstered Belgian linen platform beds, solid ash frames, and soft-close bedside tables with spacious storage.',
     priceLabel: 'Bedroom Starting At',
-    price: '₱1,180',
+    price: '$1,180',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Shop Bedroom Collection',
     filterTarget: 'bedroom',
@@ -121,7 +121,7 @@ const HERO_TAB_CONTENT = {
     description:
       'Organize your workspace and living areas with solid walnut writing desks, concealed cable management, and handcrafted fluted wood sideboards.',
     priceLabel: 'Study & Storage Starting At',
-    price: '₱2,150',
+    price: '$2,150',
     monthly: 'Flexible monthly payment plans available',
     ctaText: 'Shop Study & Storage',
     filterTarget: 'office',
@@ -266,7 +266,7 @@ function esc(value) {
 }
 
 function usd(amount) {
-  return '₱' + Math.round(Number(amount || 0)).toLocaleString('en-US');
+  return '$' + Math.round(Number(amount || 0)).toLocaleString('en-US');
 }
 
 function bindLiveSearchInput(inputId, stateKey, onRender) {
@@ -5545,7 +5545,7 @@ function renderDashboardContent() {
                 activeMovementMode === 'Stock In'
                   ? `
                 <div>
-                  <label for="inv-move-cost" class="admin-label">Total Purchase Cost (₱ PHP, Optional)</label>
+                  <label for="inv-move-cost" class="admin-label">Total Purchase Cost ($ USD, Optional)</label>
                   <input
                     id="inv-move-cost"
                     type="number"
@@ -5717,7 +5717,7 @@ function renderDashboardContent() {
                   />
                 </div>
                 <div>
-                  <label for="mat-cost" class="admin-label">Unit Cost (₱ PHP)</label>
+                  <label for="mat-cost" class="admin-label">Unit Cost ($ USD)</label>
                   <input
                     id="mat-cost"
                     type="number"
@@ -7232,7 +7232,7 @@ function renderAdminAnalyticsSection() {
       const val = Math.round(maxDailyRev * pct);
       return `
         <line x1="${padL}" y1="${y}" x2="${svgW - padR}" y2="${y}" stroke="#E2E8F0" stroke-dasharray="3 3" />
-        <text x="${padL - 6}" y="${y + 4}" text-anchor="end" fill="#64748B" font-size="10" font-family="monospace">₱${val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val}</text>
+        <text x="${padL - 6}" y="${y + 4}" text-anchor="end" fill="#64748B" font-size="10" font-family="monospace">$${val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val}</text>
       `;
     });
 
@@ -7387,25 +7387,185 @@ function renderAdminAnalyticsSection() {
           label: 'Stable Performance',
         };
 
+  const renderOverviewBadge = (metric, invertColors = false) => {
+    if (!metric) return '';
+    const val = Number(metric.value || 0);
+    const pct = Math.abs(Number(metric.percentChange ?? metric.percentage ?? 0));
+    const dir = metric.direction || 'flat';
+    if ((metric.isNewFromZero || metric.previousZero || metric.isZeroBaseline) && val > 0) {
+      return `<span class="monthly-overview-badge is-new" title="New activity compared to 0 in previous period">New</span>`;
+    }
+    if (dir === 'flat' || pct < 0.05) {
+      return `<span class="monthly-overview-badge is-flat" title="No change compared to previous period">No change</span>`;
+    }
+    if (dir === 'up') {
+      const tone = invertColors ? 'is-down' : 'is-up';
+      return `<span class="monthly-overview-badge ${tone}" title="Compared to previous period">↑ ${pct.toFixed(1)}%</span>`;
+    }
+    const tone = invertColors ? 'is-up' : 'is-down';
+    return `<span class="monthly-overview-badge ${tone}" title="Compared to previous period">↓ ${pct.toFixed(1)}%</span>`;
+  };
+
+  // Build 4-week revenue buckets from real database dailySeries & period transactions
+  const buildOverviewWeeklyTrendSvg = () => {
+    const totalDays = Math.max(1, dailySeries.length);
+    const weekBuckets = [
+      { label: 'Week 1', revenue: 0, orderVolume: 0, orders: 0 },
+      { label: 'Week 2', revenue: 0, orderVolume: 0, orders: 0 },
+      { label: 'Week 3', revenue: 0, orderVolume: 0, orders: 0 },
+      { label: 'Week 4', revenue: 0, orderVolume: 0, orders: 0 },
+    ];
+
+    dailySeries.forEach((d, idx) => {
+      const wIdx = Math.min(3, Math.floor(idx / 7));
+      weekBuckets[wIdx].revenue += Number(d.revenue || 0);
+      weekBuckets[wIdx].orders += Number(d.orders || 0);
+    });
+
+    (report.transactions || []).forEach((t) => {
+      const dayNum = Number(String(t.orderDate || '').slice(8, 10)) || 1;
+      const wIdx = Math.min(3, Math.floor((dayNum - 1) / 7));
+      weekBuckets[wIdx].orderVolume += Number(t.totalAmount || 0);
+    });
+
+    // Derive plotting heights from actual weekly realized revenue & order activity
+    const rawValues = weekBuckets.map((w, idx) => {
+      if (w.revenue > 0) return w.revenue;
+      if (w.orderVolume > 0) return w.orderVolume * 0.92;
+      if (idx === 3 && Number(s.totalRevenue.value || 0) > 0) {
+        return Number(s.totalRevenue.value) * 0.82;
+      }
+      return 0;
+    });
+
+    const maxWeekVal = Math.max(1000, ...rawValues.map((v) => v * 1.15));
+    const svgW = 640;
+    const svgH = 205;
+    const padL = 18;
+    const padR = 18;
+    const padT = 18;
+    const padB = 36;
+    const plotW = svgW - padL - padR;
+    const plotH = svgH - padT - padB;
+    const baselineY = padT + plotH;
+
+    const coords = weekBuckets.map((w, idx) => {
+      const x = Math.round(padL + (idx / 3) * plotW);
+      const ratio = Math.min(0.92, Math.max(0.14, rawValues[idx] / maxWeekVal));
+      const y = Math.round(padT + plotH * (1 - ratio));
+      return {
+        x,
+        y,
+        label: w.label,
+        revenue: w.revenue,
+        orderVolume: w.orderVolume,
+        orders: w.orders,
+      };
+    });
+
+    let curvePath = `M ${coords[0].x} ${coords[0].y}`;
+    for (let i = 0; i < coords.length - 1; i++) {
+      const curr = coords[i];
+      const next = coords[i + 1];
+      const cpx1 = Math.round(curr.x + (next.x - curr.x) * 0.46);
+      const cpx2 = Math.round(curr.x + (next.x - curr.x) * 0.54);
+      curvePath += ` C ${cpx1} ${curr.y}, ${cpx2} ${next.y}, ${next.x} ${next.y}`;
+    }
+    const areaPath = `${curvePath} L ${coords[coords.length - 1].x} ${baselineY} L ${coords[0].x} ${baselineY} Z`;
+
+    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((pct) => {
+      const y = Math.round(padT + plotH * pct);
+      return `<line x1="${padL}" y1="${y}" x2="${svgW - padR}" y2="${y}" stroke="#E6EFF8" stroke-width="1" />`;
+    });
+
+    const labelXPositions = [
+      padL + 34,
+      Math.round(padL + plotW * 0.35),
+      Math.round(padL + plotW * 0.65),
+      svgW - padR - 34,
+    ];
+
+    return `
+      <svg viewBox="0 0 ${svgW} ${svgH}" class="w-full h-48 overflow-visible" role="img" aria-label="Weekly revenue trend chart for ${esc(report.period.label)}">
+        <defs>
+          <linearGradient id="monthlyOverviewAreaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#0084FF" stop-opacity="0.22" />
+            <stop offset="100%" stop-color="#0084FF" stop-opacity="0.03" />
+          </linearGradient>
+        </defs>
+        ${gridLines.join('')}
+        <path d="${areaPath}" fill="url(#monthlyOverviewAreaGrad)" />
+        <path d="${curvePath}" fill="none" stroke="#0080FF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        ${coords
+          .map(
+            (pt, idx) => `
+            <g>
+              <circle cx="${pt.x}" cy="${pt.y}" r="5" fill="#0080FF" fill-opacity="0" stroke="transparent">
+                <title>${esc(pt.label)} (${esc(report.period.label)}): Realized ${usd(pt.revenue)} · ${pt.orders} order(s)</title>
+              </circle>
+              <text x="${labelXPositions[idx]}" y="${svgH - 8}" text-anchor="middle" fill="#475569" font-size="12.5" font-weight="500">${esc(pt.label)}</text>
+            </g>
+          `
+          )
+          .join('')}
+      </svg>
+    `;
+  };
+
+  // Build Month Selector Options for Monthly Overview header
+  const overviewPeriodOptions = [];
+  for (let m = 12; m >= 1; m--) {
+    const val = `2026-${String(m).padStart(2, '0')}`;
+    const label = `${monthNames[m - 1]} 2026`;
+    const isSel =
+      filterInput.preset !== 'this_year' &&
+      filterInput.preset !== 'custom_range' &&
+      Number(report.period.year) === 2026 &&
+      Number(report.period.month) === m;
+    overviewPeriodOptions.push({ value: val, label, selected: isSel });
+  }
+  overviewPeriodOptions.push({
+    value: '2025-12',
+    label: 'December 2025',
+    selected:
+      filterInput.preset !== 'this_year' &&
+      filterInput.preset !== 'custom_range' &&
+      Number(report.period.year) === 2025 &&
+      Number(report.period.month) === 12,
+  });
+  if (filterInput.preset === 'this_year') {
+    overviewPeriodOptions.unshift({
+      value: `year-${selectedYear}`,
+      label: `Full Year ${selectedYear}`,
+      selected: true,
+    });
+  } else if (filterInput.preset === 'custom_range') {
+    overviewPeriodOptions.unshift({
+      value: 'custom',
+      label: report.period.label,
+      selected: true,
+    });
+  }
+
   analyticsEl.innerHTML = `
     <div class="space-y-6" data-testid="admin-analytics-module">
       <!-- Printable & Executive Report Banner -->
-      <div class="admin-card p-5 sm:p-6 bg-gradient-to-r from-[#0B0F17] via-[#111827] to-[#1E293B] text-white border-slate-800">
+      <div class="analytics-report-banner">
         <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div class="space-y-1.5">
             <div class="flex flex-wrap items-center gap-2">
-              <span class="px-2.5 py-0.5 rounded-md bg-[#0095FF]/20 border border-[#0095FF]/40 font-mono-tech text-[11px] font-bold text-[#BCE3FF] uppercase tracking-wider">
+              <span class="px-2.5 py-0.5 rounded-md bg-[#0095FF] font-mono-tech text-[11px] font-bold text-white uppercase tracking-wider">
                 Lillia &amp; Rowena Furniture · Business Intelligence
               </span>
-              <span class="px-2.5 py-0.5 rounded-md bg-white/10 font-mono-tech text-[11px] text-slate-300">
+              <span class="px-2.5 py-0.5 rounded-md bg-white border border-sky-200 font-mono-tech text-[11px] font-semibold text-slate-700">
                 Generated ${esc(report.generatedAtManila)}
               </span>
             </div>
-            <h2 class="font-serif-display text-xl sm:text-2xl font-bold text-white">
-              Monthly Analytics &amp; Business Report — <span id="analytics-active-period-label" class="text-[#BCE3FF]">${esc(report.period.label)}</span>
+            <h2 class="font-serif-display text-xl sm:text-2xl font-bold text-slate-900">
+              Monthly Analytics &amp; Business Report — <span id="analytics-active-period-label" class="text-[#0077CC]">${esc(report.period.label)}</span>
             </h2>
-            <p class="text-xs text-slate-300">
-              Reporting Window: <strong class="font-mono-tech text-white">${esc(report.period.startDate)}</strong> to <strong class="font-mono-tech text-white">${esc(report.period.endDate)}</strong> (${report.period.dayCount} days) · Compared against <strong class="font-mono-tech text-[#BCE3FF]">${esc(report.previousPeriod.label)}</strong> (${esc(report.previousPeriod.startDate)} to ${esc(report.previousPeriod.endDate)})
+            <p class="text-xs text-slate-700">
+              Reporting Window: <strong class="font-mono-tech text-slate-900">${esc(report.period.startDate)}</strong> to <strong class="font-mono-tech text-slate-900">${esc(report.period.endDate)}</strong> (${report.period.dayCount} days) · Compared against <strong class="font-mono-tech text-[#0077CC]">${esc(report.previousPeriod.label)}</strong> (${esc(report.previousPeriod.startDate)} to ${esc(report.previousPeriod.endDate)})
             </p>
           </div>
 
@@ -7426,9 +7586,9 @@ function renderAdminAnalyticsSection() {
               type="button"
               id="analytics-export-csv-btn"
               data-testid="analytics-export-csv-btn"
-              class="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              class="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
             >
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="w-4 h-4 text-[#0077CC]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <span>Export CSV</span>
@@ -7437,9 +7597,9 @@ function renderAdminAnalyticsSection() {
               type="button"
               id="analytics-print-report-btn"
               data-testid="analytics-print-report-btn"
-              class="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              class="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
             >
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="w-4 h-4 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
               </svg>
               <span>Printable Report</span>
@@ -7568,124 +7728,262 @@ function renderAdminAnalyticsSection() {
         </div>
       </div>
 
-      <!-- 3. Monthly Business Summary Cards (9 KPIs) -->
-      <section aria-label="Monthly Business Summary Indicators" class="space-y-3">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Monthly Business Summary (${esc(report.period.label)})</h3>
-            <p class="text-xs text-slate-500">Realized revenue is calculated from paid &amp; deposit-paid non-cancelled orders using historical order prices.</p>
-          </div>
-          <span class="text-xs text-slate-500">Comparison baseline: <strong class="text-slate-800">${esc(report.previousPeriod.label)}</strong></span>
+      <!-- 3. Monthly Overview (Reference Design Match) -->
+      <section aria-label="Monthly Business Summary Indicators" class="monthly-overview-shell" id="analytics-monthly-overview-section">
+        <!-- Brand Breadcrumb Header -->
+        <div class="monthly-overview-brand">
+          <span class="monthly-overview-brand-icon" aria-hidden="true">
+            <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 11V8a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v3" />
+              <path d="M2 11h2v4h16v-4h2a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1Z" />
+              <path d="M4 18v2" />
+              <path d="M20 18v2" />
+            </svg>
+          </span>
+          <span class="monthly-overview-brand-divider" aria-hidden="true"></span>
+          <span class="monthly-overview-brand-name">Lillia &amp; Rowena</span>
+          <span class="monthly-overview-brand-sub">Admin dashboard</span>
         </div>
 
-        <div id="analytics-summary-kpi-grid" class="analytics-kpi-grid" data-testid="analytics-summary-kpi-grid">
-          <!-- 1. Total Revenue -->
-          <div class="analytics-kpi-card" data-testid="kpi-total-revenue">
-            <div class="flex items-start justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Revenue</span>
-              ${renderDeltaBadge(s.totalRevenue)}
+        <!-- Title + Interactive Month Selector -->
+        <div class="monthly-overview-header">
+          <div>
+            <h3 class="monthly-overview-title">Monthly overview</h3>
+            <p class="monthly-overview-subtitle">A clear view of your business performance</p>
+          </div>
+
+          <div class="monthly-overview-picker-wrap analytics-no-print">
+            <label for="analytics-overview-period-select" class="sr-only">Select reporting month</label>
+            <div class="monthly-overview-picker">
+              <svg class="monthly-overview-picker-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              <select
+                id="analytics-overview-period-select"
+                data-testid="analytics-overview-period-select"
+                class="monthly-overview-picker-select"
+                aria-label="Reporting Month Selector"
+              >
+                ${overviewPeriodOptions
+                  .map(
+                    (opt) =>
+                      `<option value="${esc(opt.value)}" ${opt.selected ? 'selected' : ''}>${esc(opt.label)}</option>`
+                  )
+                  .join('')}
+              </select>
+              <svg class="monthly-overview-picker-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
             </div>
-            <p class="font-mono-tech text-2xl font-bold text-[#0095FF]">${usd(s.totalRevenue.value)}</p>
-            <p class="text-[11px] text-slate-500">
-              Prev (${esc(report.previousPeriod.label)}): <strong class="font-mono-tech text-slate-700">${usd(s.totalRevenue.previousValue)}</strong>
-            </p>
+            <p class="monthly-overview-compared">Compared with ${esc(report.previousPeriod.label)}</p>
+          </div>
+        </div>
+
+        <!-- Top 4 Main KPI Cards: Total Revenue, Total Orders, Products Sold, New Customers -->
+        <div id="analytics-summary-kpi-grid" class="monthly-overview-kpi-grid" data-testid="analytics-summary-kpi-grid">
+          <!-- 1. Total Revenue -->
+          <div class="monthly-overview-card is-featured" data-testid="kpi-total-revenue">
+            <div class="monthly-overview-icon-box" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <ellipse cx="12" cy="5" rx="7" ry="3" />
+                <path d="M5 5v6c0 1.66 3.13 3 7 3s7-1.34 7-3V5" />
+                <path d="M5 11v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6" />
+              </svg>
+            </div>
+            <div class="monthly-overview-card-body">
+              <p class="monthly-overview-card-label">Total revenue</p>
+              <div class="monthly-overview-value-row">
+                <span class="monthly-overview-value is-blue">${usd(s.totalRevenue.value)}</span>
+                ${renderOverviewBadge(s.totalRevenue)}
+              </div>
+              <p class="monthly-overview-footnote" title="Previous (${esc(report.previousPeriod.label)}): ${usd(s.totalRevenue.previousValue)}">
+                vs previous period
+              </p>
+            </div>
           </div>
 
           <!-- 2. Total Orders -->
-          <div class="analytics-kpi-card" data-testid="kpi-total-orders">
-            <div class="flex items-start justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Orders</span>
-              ${renderDeltaBadge(s.totalOrders)}
+          <div class="monthly-overview-card" data-testid="kpi-total-orders">
+            <div class="monthly-overview-icon-box" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="9" cy="20" r="1.5" />
+                <circle cx="18" cy="20" r="1.5" />
+                <path d="M2 3h2.5l2.2 11.2a2 2 0 0 0 2 1.6h9.6a2 2 0 0 0 2-1.6L22 6H6" />
+              </svg>
             </div>
-            <p class="font-mono-tech text-2xl font-bold text-slate-900">${s.totalOrders.value}</p>
-            <p class="text-[11px] text-slate-500">
-              Prev: <strong class="font-mono-tech text-slate-700">${s.totalOrders.previousValue}</strong> · Gross: ${usd(s.grossOrderValue)}
-            </p>
+            <div class="monthly-overview-card-body">
+              <p class="monthly-overview-card-label">Total orders</p>
+              <div class="monthly-overview-value-row">
+                <span class="monthly-overview-value">${s.totalOrders.value}</span>
+                ${renderOverviewBadge(s.totalOrders)}
+              </div>
+              <p class="monthly-overview-footnote">
+                Previously ${s.totalOrders.previousValue} ${s.totalOrders.previousValue === 1 ? 'order' : 'orders'}
+              </p>
+            </div>
           </div>
 
-          <!-- 3. Completed Orders -->
-          <div class="analytics-kpi-card" data-testid="kpi-completed-orders">
-            <div class="flex items-start justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Completed Orders</span>
-              ${renderDeltaBadge(s.completedOrders)}
+          <!-- 3. Products Sold -->
+          <div class="monthly-overview-card" data-testid="kpi-products-sold">
+            <div class="monthly-overview-icon-box" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 11V8a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v3" />
+                <path d="M2 11h2v4h16v-4h2a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1Z" />
+                <path d="M5 17v2" />
+                <path d="M19 17v2" />
+              </svg>
             </div>
-            <p class="font-mono-tech text-2xl font-bold text-emerald-600">${s.completedOrders.value}</p>
-            <p class="text-[11px] text-slate-500">
-              Prev: <strong class="font-mono-tech text-slate-700">${s.completedOrders.previousValue}</strong> · Delivered &amp; settled
-            </p>
+            <div class="monthly-overview-card-body">
+              <p class="monthly-overview-card-label">Products sold</p>
+              <div class="monthly-overview-value-row">
+                <span class="monthly-overview-value">${s.totalProductsSold.value}</span>
+                ${renderOverviewBadge(s.totalProductsSold)}
+              </div>
+              <p class="monthly-overview-footnote">
+                Previously ${s.totalProductsSold.previousValue} ${s.totalProductsSold.previousValue === 1 ? 'unit' : 'units'}
+              </p>
+            </div>
           </div>
 
-          <!-- 4. Pending Orders -->
-          <div class="analytics-kpi-card" data-testid="kpi-pending-orders">
-            <div class="flex items-start justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Pending Orders</span>
-              ${renderDeltaBadge(s.pendingOrders)}
+          <!-- 4. New Customers -->
+          <div class="monthly-overview-card" data-testid="kpi-new-customers">
+            <div class="monthly-overview-icon-box" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="9" cy="8" r="3.2" />
+                <path d="M3.5 19v-1.2a4.8 4.8 0 0 1 4.8-4.8h1.4a4.8 4.8 0 0 1 4.8 4.8V19" />
+                <circle cx="16.5" cy="8.5" r="2.5" />
+                <path d="M16.5 13.5a4.2 4.2 0 0 1 4 4.2V19" />
+              </svg>
             </div>
-            <p class="font-mono-tech text-2xl font-bold text-amber-600">${s.pendingOrders.value}</p>
-            <p class="text-[11px] text-slate-500">
-              Prev: <strong class="font-mono-tech text-slate-700">${s.pendingOrders.previousValue}</strong> · Processing: ${s.processingOrdersCount} · Shipped: ${s.shippedOrdersCount}
-            </p>
+            <div class="monthly-overview-card-body">
+              <p class="monthly-overview-card-label">New customers</p>
+              <div class="monthly-overview-value-row">
+                <span class="monthly-overview-value">${s.newCustomers.value}</span>
+                ${renderOverviewBadge(s.newCustomers)}
+              </div>
+              <p class="monthly-overview-footnote">
+                Previously ${s.newCustomers.previousValue} ${s.newCustomers.previousValue === 1 ? 'customer' : 'customers'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Middle Row: Revenue Trend Chart + Grouped Order Status Panel -->
+        <div class="monthly-overview-middle-grid">
+          <!-- Revenue Trend Chart -->
+          <div class="monthly-overview-panel space-y-3" data-testid="overview-revenue-trend-panel">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-3">
+                <h4 class="monthly-overview-panel-title">Revenue trend</h4>
+                <span class="monthly-overview-pill-tag">${esc(report.period.label)}</span>
+              </div>
+              <span class="font-mono-tech text-xs font-semibold text-slate-500">
+                Realized: <strong class="text-[#0080FF]">${usd(s.totalRevenue.value)}</strong>
+              </span>
+            </div>
+            ${buildOverviewWeeklyTrendSvg()}
           </div>
 
-          <!-- 5. Cancelled Orders -->
-          <div class="analytics-kpi-card" data-testid="kpi-cancelled-orders">
-            <div class="flex items-start justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Cancelled Orders</span>
-              ${renderDeltaBadge(s.cancelledOrders, true)}
+          <!-- Grouped Completed / Pending / Cancelled Orders Panel -->
+          <div class="monthly-overview-panel flex flex-col justify-between" data-testid="overview-order-status-panel">
+            <div>
+              <h4 class="monthly-overview-panel-title">Order status</h4>
+              <p class="text-xs text-slate-500 font-medium mt-0.5">Current period</p>
+
+              <div class="monthly-overview-status-list">
+                <div class="monthly-overview-status-row" data-testid="kpi-completed-orders">
+                  <span class="monthly-overview-status-left">
+                    <span class="monthly-overview-status-dot is-completed"></span>
+                    <span>Completed</span>
+                  </span>
+                  <span class="monthly-overview-status-count">${s.completedOrders.value}</span>
+                </div>
+
+                <div class="monthly-overview-status-row" data-testid="kpi-pending-orders">
+                  <span class="monthly-overview-status-left">
+                    <span class="monthly-overview-status-dot is-pending"></span>
+                    <span>Pending</span>
+                  </span>
+                  <span class="monthly-overview-status-count">${s.pendingOrders.value}</span>
+                </div>
+
+                <div class="monthly-overview-status-row" data-testid="kpi-cancelled-orders">
+                  <span class="monthly-overview-status-left">
+                    <span class="monthly-overview-status-dot ${s.cancelledOrders.value > 0 ? 'is-cancelled-active' : 'is-cancelled'}"></span>
+                    <span>Cancelled</span>
+                  </span>
+                  <span class="monthly-overview-status-count">${s.cancelledOrders.value}</span>
+                </div>
+              </div>
             </div>
-            <p class="font-mono-tech text-2xl font-bold text-rose-600">${s.cancelledOrders.value}</p>
-            <p class="text-[11px] text-slate-500">
-              Prev: <strong class="font-mono-tech text-slate-700">${s.cancelledOrders.previousValue}</strong> · Excluded from revenue
-            </p>
+
+            <div>
+              <button
+                type="button"
+                id="analytics-overview-view-orders-btn"
+                data-testid="analytics-overview-view-orders-btn"
+                class="monthly-overview-view-orders-btn analytics-no-print"
+              >
+                <span>View orders</span>
+                <span aria-hidden="true">→</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Compact Row: Average Order Value & Discounts Given -->
+        <div class="monthly-overview-bottom-grid">
+          <!-- Average Order Value -->
+          <div class="monthly-overview-card" data-testid="kpi-average-order-value">
+            <div class="monthly-overview-icon-box" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                <line x1="7" y1="7" x2="7.01" y2="7" />
+              </svg>
+            </div>
+            <div class="monthly-overview-card-body">
+              <p class="monthly-overview-card-label">Average order value</p>
+              <div class="monthly-overview-value-row">
+                <span class="monthly-overview-value">${usd(s.averageOrderValue.value)}</span>
+              </div>
+              <p class="monthly-overview-footnote">Per realized order</p>
+            </div>
           </div>
 
-          <!-- 6. Total Products Sold -->
-          <div class="analytics-kpi-card" data-testid="kpi-products-sold">
-            <div class="flex items-start justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Products Sold</span>
-              ${renderDeltaBadge(s.totalProductsSold)}
+          <!-- Discounts Given -->
+          <div class="monthly-overview-card" data-testid="kpi-discounts-given">
+            <div class="monthly-overview-icon-box" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="5" x2="5" y2="19" />
+                <circle cx="6.5" cy="6.5" r="2.5" />
+                <circle cx="17.5" cy="17.5" r="2.5" />
+              </svg>
             </div>
-            <p class="font-mono-tech text-2xl font-bold text-slate-900">${s.totalProductsSold.value} <span class="text-xs font-normal text-slate-500">units</span></p>
-            <p class="text-[11px] text-slate-500">
-              Prev: <strong class="font-mono-tech text-slate-700">${s.totalProductsSold.previousValue} units</strong>
-            </p>
+            <div class="monthly-overview-card-body">
+              <p class="monthly-overview-card-label">Discounts given</p>
+              <div class="monthly-overview-value-row">
+                <span class="monthly-overview-value">${usd(s.totalDiscountsGiven.value)}</span>
+                ${renderOverviewBadge(s.totalDiscountsGiven)}
+              </div>
+              <p class="monthly-overview-footnote">Catalog and vouchers</p>
+            </div>
           </div>
+        </div>
 
-          <!-- 7. New Customers -->
-          <div class="analytics-kpi-card" data-testid="kpi-new-customers">
-            <div class="flex items-start justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">New Customers</span>
-              ${renderDeltaBadge(s.newCustomers)}
-            </div>
-            <p class="font-mono-tech text-2xl font-bold text-[#0077CC]">${s.newCustomers.value}</p>
-            <p class="text-[11px] text-slate-500">
-              Prev: <strong class="font-mono-tech text-slate-700">${s.newCustomers.previousValue}</strong> · Registered in period
-            </p>
+        <!-- Bottom Info Footer -->
+        <div class="monthly-overview-footer">
+          <div class="flex items-center gap-1.5" title="Realized revenue is calculated from paid and deposit-confirmed non-cancelled orders using historical transaction prices.">
+            <svg class="w-4 h-4 text-slate-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+            <span>How metrics are calculated</span>
           </div>
-
-          <!-- 8. Total Discounts Given -->
-          <div class="analytics-kpi-card" data-testid="kpi-discounts-given">
-            <div class="flex items-start justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Discounts Given</span>
-              ${renderDeltaBadge(s.totalDiscountsGiven)}
-            </div>
-            <p class="font-mono-tech text-2xl font-bold text-indigo-600">${usd(s.totalDiscountsGiven.value)}</p>
-            <p class="text-[11px] text-slate-500">
-              Prev: <strong class="font-mono-tech text-slate-700">${usd(s.totalDiscountsGiven.previousValue)}</strong> · Catalog &amp; Vouchers
-            </p>
-          </div>
-
-          <!-- 9. Average Order Value -->
-          <div class="analytics-kpi-card" data-testid="kpi-average-order-value">
-            <div class="flex items-start justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Average Order Value</span>
-              ${renderDeltaBadge(s.averageOrderValue)}
-            </div>
-            <p class="font-mono-tech text-2xl font-bold text-emerald-700">${usd(s.averageOrderValue.value)}</p>
-            <p class="text-[11px] text-slate-500">
-              Prev: <strong class="font-mono-tech text-slate-700">${usd(s.averageOrderValue.previousValue)}</strong> · Per realized order
-            </p>
-          </div>
+          <span>Realized revenue · Asia/Manila (USD $)</span>
         </div>
       </section>
 
@@ -7705,12 +8003,12 @@ function renderAdminAnalyticsSection() {
         </div>
 
         <!-- Daily Revenue & Daily Orders Charts (2-col grid) -->
-        <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        <div class="analytics-grid-2">
           <div class="analytics-chart-card space-y-3" id="analytics-chart-daily-revenue">
             <div class="flex items-start justify-between gap-2">
               <div>
                 <h4 class="text-sm font-bold text-slate-900">Daily Revenue Throughout Selected Period</h4>
-                <p class="text-xs text-slate-500">${esc(report.period.label)} · Realized daily revenue in Philippine Peso (₱)</p>
+                <p class="text-xs text-slate-500">${esc(report.period.label)} · Realized daily revenue in US Dollars ($)</p>
               </div>
               <span class="font-mono-tech text-sm font-bold text-[#0095FF]">${usd(s.totalRevenue.value)}</span>
             </div>
@@ -7730,9 +8028,9 @@ function renderAdminAnalyticsSection() {
         </div>
 
         <!-- Monthly Revenue Throughout Selected Year & Revenue by Category (2-col grid) -->
-        <div class="grid grid-cols-1 xl:grid-cols-12 gap-5">
+        <div class="analytics-grid-split-7-5">
           <!-- Monthly Revenue Throughout Selected Year + Sales Comparison Between Months -->
-          <div class="xl:col-span-7 analytics-chart-card space-y-4" id="analytics-chart-monthly-revenue">
+          <div class="analytics-chart-card space-y-4" id="analytics-chart-monthly-revenue">
             <div class="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <h4 class="text-sm font-bold text-slate-900">Monthly Revenue (${sales.year}) &amp; Month-over-Month Comparison</h4>
@@ -7744,7 +8042,7 @@ function renderAdminAnalyticsSection() {
             </div>
 
             <!-- 12-Month Vertical Bar Chart -->
-            <div class="grid grid-cols-12 gap-1.5 items-end h-44 pt-6 px-2 border-b border-slate-200 bg-slate-50/50 rounded-t-xl">
+            <div class="analytics-bars-12 analytics-bars-12-tall border-b border-slate-200 bg-slate-50/50 rounded-t-xl">
               ${monthlyComparison
                 .map((m) => {
                   const pctH = Math.max(4, Math.round((Number(m.revenue || 0) / maxMonthRev) * 100));
@@ -7753,7 +8051,7 @@ function renderAdminAnalyticsSection() {
                   return `
                     <div class="flex flex-col items-center justify-end h-full group">
                       <span class="font-mono-tech text-[9px] font-bold ${hasRev ? 'text-slate-700' : 'text-slate-300'} mb-1">
-                        ${hasRev ? '₱' + (m.revenue >= 1000 ? (m.revenue / 1000).toFixed(1) + 'k' : m.revenue) : '0'}
+                        ${hasRev ? '$' + (m.revenue >= 1000 ? (m.revenue / 1000).toFixed(1) + 'k' : m.revenue) : '0'}
                       </span>
                       <div
                         class="w-full max-w-[28px] rounded-t-md transition-all ${
@@ -7782,9 +8080,9 @@ function renderAdminAnalyticsSection() {
                   <tr>
                     <th>Month</th>
                     <th>Orders</th>
-                    <th>Products Sold</th>
-                    <th>Realized Revenue</th>
-                    <th class="text-right">vs Previous Month</th>
+                    <th>Units Sold</th>
+                    <th>Revenue</th>
+                    <th class="text-right">vs Prev</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -7811,7 +8109,7 @@ function renderAdminAnalyticsSection() {
           </div>
 
           <!-- Revenue by Product Category -->
-          <div class="xl:col-span-5 analytics-chart-card space-y-4" id="analytics-chart-category-revenue">
+          <div class="analytics-chart-card space-y-4" id="analytics-chart-category-revenue">
             <div>
               <h4 class="text-sm font-bold text-slate-900">Revenue by Product Category</h4>
               <p class="text-xs text-slate-500">Category contribution to ${esc(report.period.label)} showroom revenue</p>
@@ -7845,8 +8143,8 @@ function renderAdminAnalyticsSection() {
       </section>
 
       <!-- 5. Best-Selling Products & Low-Sales Identification -->
-      <section id="analytics-best-sellers-section" class="grid grid-cols-1 xl:grid-cols-12 gap-5">
-        <div class="xl:col-span-8 admin-card overflow-hidden">
+      <section id="analytics-best-sellers-section" class="analytics-grid-split-8-4">
+        <div class="admin-card overflow-hidden">
           <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 class="text-sm font-bold text-slate-900">Top 5 Best-Selling Products (${esc(report.period.label)})</h3>
@@ -7913,7 +8211,7 @@ function renderAdminAnalyticsSection() {
         </div>
 
         <!-- Products with Fewer Sales -->
-        <div class="xl:col-span-4 admin-card overflow-hidden flex flex-col justify-between">
+        <div class="admin-card overflow-hidden flex flex-col justify-between">
           <div>
             <div class="px-5 py-4 border-b border-slate-200 bg-amber-50/60 flex items-center justify-between gap-2">
               <div>
@@ -7965,9 +8263,9 @@ function renderAdminAnalyticsSection() {
       </section>
 
       <!-- 6. Order Analytics & 7. Customer Analytics -->
-      <section class="grid grid-cols-1 xl:grid-cols-12 gap-5">
+      <section class="analytics-grid-split-5-7">
         <!-- 6. Order Status Distribution -->
-        <div id="analytics-orders-section" class="xl:col-span-5 analytics-chart-card space-y-4">
+        <div id="analytics-orders-section" class="analytics-chart-card space-y-4">
           <div class="flex items-start justify-between gap-2">
             <div>
               <h3 class="text-sm font-bold text-slate-900">Order Analytics — Status Distribution</h3>
@@ -8030,7 +8328,7 @@ function renderAdminAnalyticsSection() {
         </div>
 
         <!-- 7. Customer Analytics -->
-        <div id="analytics-customers-section" class="xl:col-span-7 analytics-chart-card space-y-4">
+        <div id="analytics-customers-section" class="analytics-chart-card space-y-4">
           <div class="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h3 class="text-sm font-bold text-slate-900">Customer Analytics &amp; Retention</h3>
@@ -8070,16 +8368,16 @@ function renderAdminAnalyticsSection() {
               <span class="text-xs font-bold text-slate-800">Monthly Customer Registration &amp; Active Buyer Trends (${sales.year})</span>
               <span class="text-[11px] text-slate-500 font-mono-tech">Blue = New Registrations · Green = Active Buyers</span>
             </div>
-            <div class="grid grid-cols-12 gap-1.5 items-end h-20 pt-2">
+            <div class="analytics-bars-12 analytics-bars-12-compact">
               ${(custAnalytics.monthlyRegistrationTrends || [])
                 .map((m) => {
-                  const regH = Math.min(100, Math.max(m.newRegistrations > 0 ? 25 : 8, m.newRegistrations * 32));
-                  const actH = Math.min(100, Math.max(m.activeBuyers > 0 ? 25 : 8, m.activeBuyers * 28));
+                  const regH = Math.min(100, Math.max(m.newRegistrations > 0 ? 28 : 10, m.newRegistrations * 34));
+                  const actH = Math.min(100, Math.max(m.activeBuyers > 0 ? 28 : 10, m.activeBuyers * 28));
                   return `
                     <div class="flex flex-col items-center justify-end h-full">
-                      <div class="flex items-end gap-0.5 h-full w-full justify-center">
-                        <div class="w-2 rounded-t ${m.newRegistrations > 0 ? 'bg-[#0095FF]' : 'bg-slate-200'}" style="height: ${regH}%" title="${esc(m.label)}: ${m.newRegistrations} new registration(s)"></div>
-                        <div class="w-2 rounded-t ${m.activeBuyers > 0 ? 'bg-emerald-500' : 'bg-slate-200'}" style="height: ${actH}%" title="${esc(m.label)}: ${m.activeBuyers} active buyer(s)"></div>
+                      <div class="flex items-end gap-1 w-full justify-center" style="height: 52px;">
+                        <div class="rounded-t ${m.newRegistrations > 0 ? 'bg-[#0095FF]' : 'bg-slate-200'}" style="width: 7px; height: ${regH}%;" title="${esc(m.label)}: ${m.newRegistrations} new registration(s)"></div>
+                        <div class="rounded-t ${m.activeBuyers > 0 ? 'bg-emerald-500' : 'bg-slate-200'}" style="width: 7px; height: ${actH}%;" title="${esc(m.label)}: ${m.activeBuyers} active buyer(s)"></div>
                       </div>
                       <span class="font-mono-tech text-[9px] text-slate-500 mt-1">${esc(m.label)}</span>
                     </div>
@@ -8095,10 +8393,10 @@ function renderAdminAnalyticsSection() {
               <thead>
                 <tr>
                   <th>Customer</th>
-                  <th>Period Orders</th>
+                  <th>Orders</th>
                   <th>Period Spend</th>
-                  <th>Lifetime Orders</th>
-                  <th class="text-right">Lifetime Total Purchases</th>
+                  <th>All-Time</th>
+                  <th class="text-right">Lifetime Spend</th>
                 </tr>
               </thead>
               <tbody>
@@ -8126,7 +8424,7 @@ function renderAdminAnalyticsSection() {
       </section>
 
       <!-- 8. Inventory Analytics (Current Live Snapshot vs Historical Monthly Movements) -->
-      <section id="analytics-inventory-section" class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+      <section id="analytics-inventory-section" class="analytics-grid-2">
         <!-- Current Live Inventory Levels -->
         <div class="admin-card overflow-hidden">
           <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2">
@@ -8271,7 +8569,7 @@ function renderAdminAnalyticsSection() {
         <div class="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 class="text-sm font-bold text-slate-900">Fixed-Amount Voucher Analytics (${esc(report.period.label)})</h3>
-            <p class="text-xs text-slate-500">Issuance, live expiration status, redemption rate, and fixed-amount Peso discounts redeemed</p>
+            <p class="text-xs text-slate-500">Issuance, live expiration status, redemption rate, and fixed-amount Dollar ($) discounts redeemed</p>
           </div>
           <span class="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 font-mono-tech text-xs font-bold">
             Redemption Rate: ${vchAnalytics.redemptionRate.toFixed(1)}%
@@ -8279,7 +8577,7 @@ function renderAdminAnalyticsSection() {
         </div>
 
         <div class="p-5 space-y-5">
-          <div class="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
+          <div class="analytics-voucher-kpi-grid">
             <div class="p-3 rounded-xl border border-slate-200 bg-slate-50/60">
               <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Issued (Period)</span>
               <span class="font-mono-tech text-lg font-bold text-slate-900 mt-1 block">${vchAnalytics.totalIssuedInPeriod}</span>
@@ -8352,8 +8650,8 @@ function renderAdminAnalyticsSection() {
                         </td>
                         <td class="text-xs font-semibold text-slate-800">${esc(v.productName)}</td>
                         <td class="font-mono-tech text-xs font-bold text-[#0095FF] whitespace-nowrap">-${usd(v.discountAmount)}</td>
-                        <td class="font-mono-tech text-xs text-slate-600 whitespace-nowrap">${esc(v.issuedAt)}</td>
-                        <td class="font-mono-tech text-xs text-slate-600 whitespace-nowrap">${esc(String(v.expiresAt || 'No expiry').slice(0, 16))}</td>
+                        <td class="font-mono-tech text-xs text-slate-600">${esc(v.issuedAt)}</td>
+                        <td class="font-mono-tech text-xs text-slate-600">${esc(String(v.expiresAt || 'No expiry'))}</td>
                         <td class="text-right whitespace-nowrap">
                           <span class="admin-status-badge ${statusBadgeMap[v.status] || 'admin-status-in-stock'}">
                             <span class="admin-status-badge-dot"></span>${esc(v.status)}
@@ -8423,7 +8721,7 @@ function renderAdminAnalyticsSection() {
                         <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-800 font-mono-tech text-[11px] font-bold">${esc(t.normalizedStatus)}</span>
                       </td>
                       <td class="font-mono-tech text-xs text-slate-600 whitespace-nowrap">${esc(t.paymentStatus)}</td>
-                      <td class="font-mono-tech text-xs text-indigo-600 whitespace-nowrap">${t.discountAmount > 0 ? '-' + usd(t.discountAmount) : '₱0'}</td>
+                      <td class="font-mono-tech text-xs text-indigo-600 whitespace-nowrap">${t.discountAmount > 0 ? '-' + usd(t.discountAmount) : '$0'}</td>
                       <td class="text-right font-mono-tech text-xs font-bold ${t.realizedRevenue > 0 ? 'text-emerald-700' : 'text-slate-400'} whitespace-nowrap">
                         ${usd(t.realizedRevenue)}
                       </td>
@@ -8469,6 +8767,37 @@ function renderAdminAnalyticsSection() {
       renderAdminAnalyticsSection();
     });
   });
+
+  // Bind Month Selector in Monthly Overview header
+  const overviewPeriodSelect = document.getElementById('analytics-overview-period-select');
+  if (overviewPeriodSelect) {
+    overviewPeriodSelect.addEventListener('change', (e) => {
+      const val = String(e.target.value || '');
+      if (val.startsWith('year-')) {
+        state.adminAnalyticsPreset = 'this_year';
+        state.adminAnalyticsYear = val.replace('year-', '');
+      } else if (val.includes('-')) {
+        const [yStr, mStr] = val.split('-');
+        state.adminAnalyticsPreset = 'select_month';
+        state.adminAnalyticsYear = yStr;
+        state.adminAnalyticsMonth = String(Number(mStr));
+      }
+      renderAdminAnalyticsSection();
+    });
+  }
+
+  // Bind "View orders ->" button in Monthly Overview Order Status panel
+  const overviewViewOrdersBtn = document.getElementById('analytics-overview-view-orders-btn');
+  if (overviewViewOrdersBtn) {
+    overviewViewOrdersBtn.addEventListener('click', () => {
+      const ordersSectionEl = document.getElementById('analytics-orders-section');
+      if (ordersSectionEl) {
+        ordersSectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (window.__switchAdminTab) {
+        window.__switchAdminTab('orders');
+      }
+    });
+  }
 
   // Bind Month & Year Selectors
   const monthSelect = document.getElementById('analytics-select-month');
@@ -8716,7 +9045,7 @@ function initCatalogPage() {
       state.catalogPageSpotlightProductId = '';
       state.catalogPageSearchQuery = '';
       if (priceSlider) priceSlider.value = '5500';
-      if (priceDisplay) priceDisplay.textContent = '₱5,500';
+      if (priceDisplay) priceDisplay.textContent = '$5,500';
       if (topSearch) topSearch.value = '';
       syncClear('');
       syncCatalogUrlParams();

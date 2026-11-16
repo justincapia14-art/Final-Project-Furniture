@@ -208,19 +208,25 @@ INSERT INTO `Material` (`MaterialID`, `MaterialName`, `MaterialType`, `Unit`, `U
 ('MAT-BRS-07', 'Solid Aged Brass Hardware & Butterfly Keys', 'Hardware & Joinery', 'sets', 95.00, 32.00),
 ('MAT-CRD-08', 'Danish Waxed Paper Cord & Cold-Pressed Linseed Oil', 'Cord & Finishes', 'rolls', 42.00, 24.00);
 
--- 6. Voucher (Single-Customer, Single-Product Vouchers — Explicit Voucher Code IDs)
+-- 6. Voucher (Single-Customer, Single-Product Fixed-Amount Vouchers — Explicit Voucher Code IDs)
 INSERT INTO `Voucher` (`VoucherID`, `CustomerID`, `ProductID`, `AdminID`, `Code`, `DiscountValue`, `ExpiryDate`, `Status`) VALUES
 ('VCH-LR-740', 'LR-CUS-301', 'LR-LV-014', 'ADM-LR-901', 'VCH-ROWENA-SOFA400', 400.00, '2026-12-31', 'Active'),
 ('VCH-LR-735', 'LR-CUS-301', 'LR-DN-108', 'ADM-LR-901', 'VCH-ROWENA-WALNUT350', 350.00, '2026-12-31', 'Active'),
-('VCH-LR-725', 'LR-CUS-302', 'LR-BD-204', 'ADM-LR-901', 'VCH-JULIAN-BED250', 250.00, '2026-12-15', 'Active');
+('VCH-LR-725', 'LR-CUS-302', 'LR-BD-204', 'ADM-LR-901', 'VCH-JULIAN-BED250', 250.00, '2026-12-15', 'Active'),
+('VCH-LR-710', 'LR-CUS-304', 'LR-OF-315', 'ADM-LR-901', 'VCH-ELENA-DESK300', 300.00, '2026-12-10', 'Used'),
+('VCH-LR-705', 'LR-CUS-308', 'LR-LV-029', 'ADM-LR-901', 'VCH-MARCUS-CHAIR200', 200.00, '2026-10-31', 'Expired'),
+('VCH-LR-690', 'LR-CUS-302', 'LR-OF-302', 'ADM-LR-901', 'VCH-JULIAN-CREDENZA150', 150.00, '2026-12-20', 'Revoked');
 
--- 7. Customer_Order (Explicit Order Code IDs)
+-- 7. Customer_Order (Explicit Order Code IDs across September, October, and November 2026)
 INSERT INTO `Customer_Order` (`OrderID`, `CustomerID`, `OrderDate`, `Status`) VALUES
 ('ORD-2026-8841', 'LR-CUS-301', '2026-10-18', 'InProduction'),
 ('ORD-2026-8834', 'LR-CUS-301', '2026-10-04', 'Ready'),
 ('ORD-2026-8829', 'LR-CUS-302', '2026-10-11', 'InProduction'),
 ('ORD-2026-8815', 'LR-CUS-304', '2026-09-26', 'Delivered'),
-('ORD-2026-8850', 'LR-CUS-308', '2026-11-08', 'Pending');
+('ORD-2026-8850', 'LR-CUS-308', '2026-11-08', 'Pending'),
+('ORD-2026-8854', 'LR-CUS-304', '2026-11-04', 'Delivered'),
+('ORD-2026-8858', 'LR-CUS-301', '2026-11-11', 'Delivered'),
+('ORD-2026-8862', 'LR-CUS-302', '2026-11-15', 'InProduction');
 
 -- 8. Order_Item (Explicit OrderItem Code IDs)
 INSERT INTO `Order_Item` (`OrderItemID`, `OrderID`, `ProductID`, `VoucherID`, `ItemType`, `Quantity`, `UnitPrice`) VALUES
@@ -228,7 +234,10 @@ INSERT INTO `Order_Item` (`OrderItemID`, `OrderID`, `ProductID`, `VoucherID`, `I
 ('ITM-2026-5834', 'ORD-2026-8834', 'LR-LV-014', NULL, 'Standard', 1, 4365.00),
 ('ITM-2026-5829', 'ORD-2026-8829', 'LR-OF-302', NULL, 'Standard', 2, 3307.00),
 ('ITM-2026-5815', 'ORD-2026-8815', 'LR-BD-204', NULL, 'Standard', 1, 3650.00),
-('ITM-2026-5850', 'ORD-2026-8850', 'LR-LV-029', NULL, 'Standard', 2, 1840.00);
+('ITM-2026-5850', 'ORD-2026-8850', 'LR-LV-029', NULL, 'Standard', 2, 1840.00),
+('ITM-2026-5854', 'ORD-2026-8854', 'LR-KT-401', 'VCH-LR-710', 'Standard', 1, 3165.00),
+('ITM-2026-5858', 'ORD-2026-8858', 'LR-DN-115', NULL, 'Standard', 3, 1290.00),
+('ITM-2026-5862', 'ORD-2026-8862', 'LR-OF-315', NULL, 'Standard', 1, 2150.00);
 
 -- 9. Order_Item_Material
 INSERT INTO `Order_Item_Material` (`OrderItemID`, `MaterialID`, `QuantityUsed`) VALUES
@@ -236,7 +245,10 @@ INSERT INTO `Order_Item_Material` (`OrderItemID`, `MaterialID`, `QuantityUsed`) 
 ('ITM-2026-5834', 'MAT-BCL-04', 14.00),
 ('ITM-2026-5829', 'MAT-WAL-01', 64.00),
 ('ITM-2026-5815', 'MAT-LIN-05', 16.00),
-('ITM-2026-5850', 'MAT-OAK-02', 24.00);
+('ITM-2026-5850', 'MAT-OAK-02', 24.00),
+('ITM-2026-5854', 'MAT-TRV-06', 2.00),
+('ITM-2026-5858', 'MAT-CRD-08', 4.00),
+('ITM-2026-5862', 'MAT-OAK-02', 18.00);
 
 -- 10. Customization (Explicit Customization Code ID)
 INSERT INTO `Customization` (`CustomizationID`, `OrderItemID`, `MaterialID`, `Length`, `Width`, `Height`, `ColorFinish`, `Notes`, `ExtraCost`) VALUES
@@ -247,7 +259,10 @@ INSERT INTO `Payment` (`PaymentID`, `OrderID`, `PaymentDate`, `Amount`) VALUES
 ('PAY-2026-9841', 'ORD-2026-8841', '2026-10-18', 1848.00),
 ('PAY-2026-9834', 'ORD-2026-8834', '2026-10-04', 4365.00),
 ('PAY-2026-9829', 'ORD-2026-8829', '2026-10-11', 3307.00),
-('PAY-2026-9815', 'ORD-2026-8815', '2026-09-26', 3650.00);
+('PAY-2026-9815', 'ORD-2026-8815', '2026-09-26', 3650.00),
+('PAY-2026-9854', 'ORD-2026-8854', '2026-11-04', 3165.00),
+('PAY-2026-9858', 'ORD-2026-8858', '2026-11-11', 3870.00),
+('PAY-2026-9862', 'ORD-2026-8862', '2026-11-15', 2150.00);
 
 -- 12. Production_Task (Explicit Task Code IDs)
 INSERT INTO `Production_Task` (`TaskID`, `OrderItemID`, `StartDate`, `EndDate`, `TaskStatus`) VALUES
@@ -255,7 +270,10 @@ INSERT INTO `Production_Task` (`TaskID`, `OrderItemID`, `StartDate`, `EndDate`, 
 ('TSK-2026-2834', 'ITM-2026-5834', '2026-10-04', '2026-11-12', 'Done'),
 ('TSK-2026-2829', 'ITM-2026-5829', '2026-10-11', NULL, 'InProgress'),
 ('TSK-2026-2815', 'ITM-2026-5815', '2026-09-26', '2026-11-08', 'Done'),
-('TSK-2026-2850', 'ITM-2026-5850', '2026-11-08', NULL, 'Todo');
+('TSK-2026-2850', 'ITM-2026-5850', '2026-11-08', NULL, 'Todo'),
+('TSK-2026-2854', 'ITM-2026-5854', '2026-11-04', '2026-11-14', 'Done'),
+('TSK-2026-2858', 'ITM-2026-5858', '2026-11-11', '2026-11-15', 'Done'),
+('TSK-2026-2862', 'ITM-2026-5862', '2026-11-15', NULL, 'InProgress');
 
 -- =============================================================================
 -- STORED PROCEDURES & TRIGGERS

@@ -65,6 +65,16 @@ try {
 
         switch ($action) {
             case 'get_analytics_report':
+                $activeUser = $_SESSION['user'] ?? $store['sessionUser'] ?? null;
+                $activeRole = is_array($activeUser) ? strtolower((string) ($activeUser['role'] ?? '')) : '';
+                if ($activeRole === 'client' || $activeRole === 'customer') {
+                    http_response_code(403);
+                    echo json_encode([
+                        'ok'    => false,
+                        'error' => 'Unauthorized: Monthly Analytics & Business Reports are restricted to authorized administrators.',
+                    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+                    exit;
+                }
                 $filterInput = isset($payload['filter']) && is_array($payload['filter']) ? $payload['filter'] : $payload;
                 $report = $analyticsModel->generateReport($filterInput);
                 echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);

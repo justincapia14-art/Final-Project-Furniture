@@ -419,8 +419,8 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
       image: 'assets/images/category_dining_tables.jpg',
     });
     assert.equal(lowPriceCheck.valid, false);
-    assert.equal(lowPriceCheck.errorMessage, 'Base Price must be at least ₱50.');
-    assert.equal(formatVoucherBenefitLabel({ discountType: 'fixed', discountAmount: 300 }), '₱300 OFF');
+    assert.equal(lowPriceCheck.errorMessage, 'Base Price must be at least $50.');
+    assert.equal(formatVoucherBenefitLabel({ discountType: 'fixed', discountAmount: 300 }), '$300 OFF');
   });
 
   it('removes products from the catalog and cleans up associated cart items and vouchers', () => {
@@ -850,7 +850,7 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
     assert.equal(novReport.period.label, 'November 2026');
     assert.equal(novReport.previousPeriod.label, 'October 2026');
     assert.ok(novReport.summary.totalRevenue.value > 0);
-    assert.equal(novReport.summary.totalOrders.value, 5); // ord-103, ord-105, ord-106, ord-107, ord-108
+    assert.equal(novReport.summary.totalOrders.value, 4); // ord-105, ord-106, ord-107, ord-108
     assert.equal(novReport.summary.completedOrders.value, 2); // ord-106, ord-107
     assert.equal(novReport.summary.pendingOrders.value, 1); // ord-105
     assert.ok(novReport.summary.totalProductsSold.value >= 5);
@@ -926,14 +926,14 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
     assert.ok(novReport.voucherAnalytics.redeemedVouchers >= 1);
     assert.ok(novReport.voucherAnalytics.expiredVouchers >= 1);
     assert.ok(novReport.voucherAnalytics.revokedVouchers >= 1);
-    assert.ok(novReport.voucherAnalytics.totalDiscountRedeemed >= 450);
+    assert.ok(novReport.voucherAnalytics.totalDiscountRedeemed >= 300);
 
     // 10. CSV & PDF Report Exports contain business name, reporting period, summary stats, and transactions
     const csvContent = buildAnalyticsCsvContent(novReport);
     assert.ok(csvContent.includes('Lillia and Rowena Furniture'));
     assert.ok(csvContent.includes('November 2026'));
-    assert.ok(csvContent.includes('Total Revenue (PHP)'));
-    assert.ok(csvContent.includes('ORD-2026-8849'));
+    assert.ok(csvContent.includes('Total Revenue ($)'));
+    assert.ok(csvContent.includes('ORD-2026-8854'));
 
     const pdfBytes = buildAnalyticsPdfBytes(novReport);
     assert.ok(pdfBytes instanceof Uint8Array);

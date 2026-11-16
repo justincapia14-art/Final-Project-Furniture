@@ -142,6 +142,14 @@ function handleApiRequest(req, res, parsedUrl) {
 
           switch (action) {
             case 'get_analytics_report': {
+              const activeUser = payload.sessionUser || store.sessionUser || null;
+              const activeRole = activeUser && activeUser.role ? String(activeUser.role).toLowerCase() : '';
+              if (activeRole === 'client' || activeRole === 'customer') {
+                return sendJson(res, 403, {
+                  ok: false,
+                  error: 'Unauthorized: Monthly Analytics & Business Reports are restricted to authorized administrators.',
+                });
+              }
               const filterInput =
                 payload.filter && typeof payload.filter === 'object' ? payload.filter : payload;
               const report = computeMonthlyAnalyticsReport(store, filterInput, Date.now());

@@ -71,7 +71,7 @@ class Product
             throw new ValidationException('Product image is required when adding or editing a product.');
         }
         if ($price < 50.0) {
-            throw new ValidationException('Base Price must be at least ₱50.');
+            throw new ValidationException('Base Price must be at least $50.');
         }
 
         $isCustomized = ($rawType === 'customized' || $rawType === 'messenger');
@@ -238,14 +238,14 @@ class Product
 
         $discountAmount = round((float) ($input['discountAmount'] ?? $input['discountValue'] ?? 0), 2);
         if ($discountAmount <= 0) {
-            throw new ValidationException('Discount Amount (₱) must be greater than ₱0.');
+            throw new ValidationException('Discount Amount ($) must be greater than $0.');
         }
 
         $maxProductPrice = (float) ($matchedProduct['effectivePrice'] ?? $matchedProduct['price'] ?? 0);
         if ($maxProductPrice > 0 && $discountAmount > $maxProductPrice) {
             throw new ValidationException(
                 sprintf(
-                    'Discount Amount (₱%s) cannot exceed the eligible product\'s price (₱%s for %s).',
+                    'Discount Amount ($%s) cannot exceed the eligible product\'s price ($%s for %s).',
                     number_format($discountAmount, 0),
                     number_format($maxProductPrice, 0),
                     (string) ($matchedProduct['name'] ?? 'Selected Product')

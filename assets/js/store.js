@@ -407,7 +407,13 @@ export function formatManilaDateTimeParts(isoStr) {
 
 export function formatVoucherIssuedDisplay(voucher) {
   if (!voucher || typeof voucher !== 'object') {
-    return { primary: '—', secondary: 'Not recorded', full: '—', hasExactTime: false };
+    return {
+      primary: '—',
+      secondary: 'Not recorded',
+      full: '—',
+      hasExactTime: false,
+      hasFullTimestamp: false,
+    };
   }
   if (voucher.issuedAt && !isDateOnlyString(voucher.issuedAt)) {
     const parts = formatManilaDateTimeParts(voucher.issuedAt);
@@ -416,6 +422,7 @@ export function formatVoucherIssuedDisplay(voucher) {
       secondary: parts.timePart,
       full: parts.full,
       hasExactTime: true,
+      hasFullTimestamp: true,
     };
   }
   if (voucher.createdAt) {
@@ -425,9 +432,16 @@ export function formatVoucherIssuedDisplay(voucher) {
       secondary: 'Time not recorded',
       full: `${datePart} (Time not recorded)`,
       hasExactTime: false,
+      hasFullTimestamp: false,
     };
   }
-  return { primary: '—', secondary: 'Time not recorded', full: '—', hasExactTime: false };
+  return {
+    primary: '—',
+    secondary: 'Time not recorded',
+    full: '—',
+    hasExactTime: false,
+    hasFullTimestamp: false,
+  };
 }
 
 export function resolveVoucherExpirationTimestamp(voucher) {
@@ -609,7 +623,7 @@ export function formatVoucherBenefitLabel(voucher) {
     return `${pct}% OFF`;
   }
   const amt = Number(voucher.discountAmount ?? voucher.discountValue ?? 0);
-  return `₱${Math.round(amt).toLocaleString('en-US')} OFF`;
+  return `$${Math.round(amt).toLocaleString('en-US')} OFF`;
 }
 
 export function validateVoucherForOrder(
@@ -1475,7 +1489,7 @@ export function validateNewFurnitureInput(input) {
     return { valid: false, errorMessage: 'SKU Code must be at least 4 characters (e.g., LR-DN-210).' };
   }
   if (!Number.isFinite(price) || price < 50) {
-    return { valid: false, errorMessage: 'Base Price must be at least ₱50.' };
+    return { valid: false, errorMessage: 'Base Price must be at least $50.' };
   }
   if (!Number.isFinite(inStockCount) || inStockCount < 0) {
     return { valid: false, errorMessage: 'Stock quantity cannot be negative.' };
@@ -2539,7 +2553,7 @@ export function validateAndBuildOfferProposal(offerInput = {}, product = null, s
   ) {
     return {
       ok: false,
-      errorMessage: 'Please enter a valid proposed price greater than ₱0.',
+      errorMessage: 'Please enter a valid proposed price greater than $0.',
       proposal: null,
     };
   }
@@ -2547,7 +2561,7 @@ export function validateAndBuildOfferProposal(offerInput = {}, product = null, s
   if (numericProposed < 25) {
     return {
       ok: false,
-      errorMessage: 'Proposed price must be at least ₱25.',
+      errorMessage: 'Proposed price must be at least $25.',
       proposal: null,
     };
   }
@@ -2904,7 +2918,7 @@ export function validateAndCreateVoucher(
   if (!Number.isFinite(rawDiscount) || rawDiscount <= 0) {
     return {
       ok: false,
-      errorMessage: 'Discount Amount (₱) must be greater than ₱0.',
+      errorMessage: 'Discount Amount ($) must be greater than $0.',
       voucher: null,
     };
   }
@@ -2915,7 +2929,7 @@ export function validateAndCreateVoucher(
   if (maxProductPrice > 0 && discountAmount > maxProductPrice) {
     return {
       ok: false,
-      errorMessage: `Discount Amount (₱${discountAmount.toLocaleString('en-US')}) cannot exceed the eligible product's price (₱${maxProductPrice.toLocaleString('en-US')} for ${matchedProduct.name}).`,
+      errorMessage: `Discount Amount ($${discountAmount.toLocaleString('en-US')}) cannot exceed the product price ($${maxProductPrice.toLocaleString('en-US')} for ${matchedProduct.name}).`,
       voucher: null,
     };
   }
@@ -2998,7 +3012,13 @@ export function validateAndCreateVoucher(
 export function revokeVoucherInList(vouchers = [], voucherId = '', nowMs = Date.now()) {
   const cleanId = String(voucherId || '').trim();
   if (!cleanId) {
-    return { ok: false, errorMessage: 'Missing voucher ID.', voucher: null, vouchers };
+    return {
+      ok: false,
+      errorMessage: 'Missing voucher ID.',
+      voucher: null,
+      revokedVoucher: null,
+      vouchers,
+    };
   }
 
   let updatedVoucher = null;
@@ -3021,7 +3041,13 @@ export function revokeVoucherInList(vouchers = [], voucherId = '', nowMs = Date.
   });
 
   if (!updatedVoucher) {
-    return { ok: false, errorMessage: 'Voucher not found.', voucher: null, vouchers };
+    return {
+      ok: false,
+      errorMessage: 'Voucher not found.',
+      voucher: null,
+      revokedVoucher: null,
+      vouchers,
+    };
   }
 
   if (updatedVoucher._cannotRevokeUsed) {
@@ -3029,6 +3055,7 @@ export function revokeVoucherInList(vouchers = [], voucherId = '', nowMs = Date.
       ok: false,
       errorMessage: 'Cannot revoke a voucher that has already been redeemed.',
       voucher: null,
+      revokedVoucher: null,
       vouchers,
     };
   }
@@ -3037,6 +3064,7 @@ export function revokeVoucherInList(vouchers = [], voucherId = '', nowMs = Date.
     ok: true,
     errorMessage: null,
     voucher: updatedVoucher,
+    revokedVoucher: updatedVoucher,
     vouchers: nextVouchers,
   };
 }
@@ -3123,24 +3151,29 @@ export function computePercentageChange(currentValue, previousValue) {
     if (Math.abs(curr) < 0.0001) {
       return {
         percentChange: 0,
-        direction: 'neutral',
+        direction: 'flat',
         formatted: '0.0%',
+        formattedChange: '0.0%',
         badgeLabel: '0.0% vs prior period',
         previousZero: true,
+        isNewFromZero: false,
       };
     }
+    const formatted = curr > 0 ? '+100.0%' : '-100.0%';
     return {
       percentChange: curr > 0 ? 100 : -100,
       direction: curr > 0 ? 'up' : 'down',
-      formatted: curr > 0 ? '+100.0%' : '-100.0%',
+      formatted,
+      formattedChange: curr > 0 ? '+100.0% (New)' : '-100.0%',
       badgeLabel: curr > 0 ? '+100.0% (up from 0)' : '-100.0%',
       previousZero: true,
+      isNewFromZero: curr > 0,
     };
   }
 
   const rawPct = ((curr - prev) / Math.abs(prev)) * 100;
   const pct = Math.round(rawPct * 10) / 10;
-  const direction = pct > 0 ? 'up' : pct < 0 ? 'down' : 'neutral';
+  const direction = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
   const sign = pct > 0 ? '+' : '';
   const formatted = `${sign}${pct.toFixed(1)}%`;
 
@@ -3148,8 +3181,10 @@ export function computePercentageChange(currentValue, previousValue) {
     percentChange: pct,
     direction,
     formatted,
+    formattedChange: formatted,
     badgeLabel: `${formatted} vs prior period`,
     previousZero: false,
+    isNewFromZero: false,
   };
 }
 
@@ -3264,10 +3299,21 @@ export function resolveAnalyticsDateRange(filterOptions = {}, nowMs = Date.now()
     previousPeriodLabel = `${MONTH_NAMES_FULL[prevMonth - 1]} ${prevYear}`;
   }
 
+  const countDaysInclusive = (sStr, eStr) => {
+    const sUtc = Date.parse(`${sStr}T00:00:00Z`);
+    const eUtc = Date.parse(`${eStr}T00:00:00Z`);
+    if (Number.isNaN(sUtc) || Number.isNaN(eUtc)) return 30;
+    return Math.max(1, Math.round((eUtc - sUtc) / 86400000) + 1);
+  };
+
+  const currentDayCount = countDaysInclusive(startDate, endDate);
+  const previousDayCount = countDaysInclusive(previousStartDate, previousEndDate);
+  const resolvedPreset = ['this_month', 'last_month', 'select_month', 'this_year', 'custom_range'].includes(preset)
+    ? preset
+    : 'this_month';
+
   return {
-    preset: ['this_month', 'last_month', 'select_month', 'this_year', 'custom_range'].includes(preset)
-      ? preset
-      : 'this_month',
+    preset: resolvedPreset,
     startDate,
     endDate,
     previousStartDate,
@@ -3277,6 +3323,20 @@ export function resolveAnalyticsDateRange(filterOptions = {}, nowMs = Date.now()
     selectedYear,
     selectedMonth,
     timezone: 'Asia/Manila',
+    current: {
+      startDate,
+      endDate,
+      label: periodLabel,
+      year: selectedYear,
+      month: selectedMonth,
+      dayCount: currentDayCount,
+    },
+    previous: {
+      startDate: previousStartDate,
+      endDate: previousEndDate,
+      label: previousPeriodLabel,
+      dayCount: previousDayCount,
+    },
   };
 }
 
@@ -3348,26 +3408,39 @@ function deduplicateOrdersList(orders = []) {
   return unique;
 }
 
-export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}, nowMs = Date.now()) {
-  const range = resolveAnalyticsDateRange(filterOptions, nowMs);
-  const products = Array.isArray(storeData?.products) ? storeData.products : DEFAULT_STORE_DATA.products || [];
-  const categories = Array.isArray(storeData?.categories)
-    ? storeData.categories
-    : DEFAULT_STORE_DATA.categories || [];
-  const materials = Array.isArray(storeData?.materials)
-    ? storeData.materials
-    : DEFAULT_STORE_DATA.materials || [];
-  const rawOrders = Array.isArray(storeData?.orders) ? storeData.orders : DEFAULT_STORE_DATA.orders || [];
+export function computeMonthlyAnalyticsReport(
+  storeData = {},
+  filterOptionsArg = {},
+  nowMsArg = Date.now()
+) {
+  const effectiveFilter =
+    storeData && typeof storeData === 'object' && storeData.filterInput
+      ? storeData.filterInput
+      : storeData && typeof storeData === 'object' && storeData.filterOptions
+      ? storeData.filterOptions
+      : filterOptionsArg || {};
+  const effectiveNowMs =
+    storeData && typeof storeData === 'object' && Number.isFinite(Number(storeData.nowMs))
+      ? Number(storeData.nowMs)
+      : Number.isFinite(Number(nowMsArg))
+      ? Number(nowMsArg)
+      : Date.now();
+
+  const range = resolveAnalyticsDateRange(effectiveFilter, effectiveNowMs);
+  const products = Array.isArray(storeData?.catalog)
+    ? storeData.catalog
+    : Array.isArray(storeData?.products)
+    ? storeData.products
+    : [];
+  const categories = Array.isArray(storeData?.categories) ? storeData.categories : [];
+  const materials = Array.isArray(storeData?.materials) ? storeData.materials : [];
+  const rawOrders = Array.isArray(storeData?.orders) ? storeData.orders : [];
   const orders = deduplicateOrdersList(rawOrders);
-  const vouchers = Array.isArray(storeData?.vouchers)
-    ? storeData.vouchers
-    : DEFAULT_STORE_DATA.vouchers || [];
-  const customers = Array.isArray(storeData?.customers)
-    ? storeData.customers
-    : DEFAULT_STORE_DATA.customers || [];
+  const vouchers = Array.isArray(storeData?.vouchers) ? storeData.vouchers : [];
+  const customers = Array.isArray(storeData?.customers) ? storeData.customers : [];
   const inventoryTransactions = Array.isArray(storeData?.inventoryTransactions)
     ? storeData.inventoryTransactions
-    : DEFAULT_STORE_DATA.inventoryTransactions || [];
+    : [];
 
   const productById = new Map();
   const productBySku = new Map();
@@ -3456,115 +3529,125 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
   const currentMetrics = computeWindowMetrics(range.startDate, range.endDate);
   const previousMetrics = computeWindowMetrics(range.previousStartDate, range.previousEndDate);
 
-  const formatPeso = (val) => `₱${Math.round(Number(val) || 0).toLocaleString('en-US')}`;
+  const formatUsd = (val) => `$${Math.round(Number(val) || 0).toLocaleString('en-US')}`;
 
-  // 3. 9 Monthly Business Summary Cards
+  const buildKpiObj = (key, label, currVal, prevVal, formattedCurr, formattedPrev, subtitle) => {
+    const comp = computePercentageChange(currVal, prevVal);
+    return {
+      key,
+      label,
+      value: currVal,
+      previousValue: prevVal,
+      formattedValue: formattedCurr,
+      formattedPreviousValue: formattedPrev,
+      subtitle,
+      percentChange: comp.percentChange,
+      direction: comp.direction,
+      formatted: comp.formatted,
+      formattedChange: comp.formattedChange,
+      isNewFromZero: comp.isNewFromZero,
+      previousZero: comp.previousZero,
+      comparison: comp,
+    };
+  };
+
+  const summary = {
+    totalRevenue: buildKpiObj(
+      'totalRevenue',
+      'Total Revenue',
+      currentMetrics.totalRevenue,
+      previousMetrics.totalRevenue,
+      formatUsd(currentMetrics.totalRevenue),
+      formatUsd(previousMetrics.totalRevenue),
+      `${currentMetrics.revenueEligibleOrderCount} paid/confirmed order(s)`
+    ),
+    totalOrders: buildKpiObj(
+      'totalOrders',
+      'Total Orders',
+      currentMetrics.totalOrders,
+      previousMetrics.totalOrders,
+      String(currentMetrics.totalOrders),
+      String(previousMetrics.totalOrders),
+      `Gross booked: ${formatUsd(currentMetrics.grossBookedRevenue)}`
+    ),
+    completedOrders: buildKpiObj(
+      'completedOrders',
+      'Completed Orders',
+      currentMetrics.completedOrders,
+      previousMetrics.completedOrders,
+      String(currentMetrics.completedOrders),
+      String(previousMetrics.completedOrders),
+      'Delivered & settled in full'
+    ),
+    pendingOrders: buildKpiObj(
+      'pendingOrders',
+      'Pending Orders',
+      currentMetrics.pendingOrders,
+      previousMetrics.pendingOrders,
+      String(currentMetrics.pendingOrders),
+      String(previousMetrics.pendingOrders),
+      `${currentMetrics.processingOrders} in workshop · ${currentMetrics.shippedOrders} ready/shipped`
+    ),
+    cancelledOrders: buildKpiObj(
+      'cancelledOrders',
+      'Cancelled Orders',
+      currentMetrics.cancelledOrders,
+      previousMetrics.cancelledOrders,
+      String(currentMetrics.cancelledOrders),
+      String(previousMetrics.cancelledOrders),
+      'Excluded from realized revenue'
+    ),
+    totalProductsSold: buildKpiObj(
+      'totalProductsSold',
+      'Total Products Sold',
+      currentMetrics.totalProductsSold,
+      previousMetrics.totalProductsSold,
+      `${currentMetrics.totalProductsSold} pcs`,
+      `${previousMetrics.totalProductsSold} pcs`,
+      'Handcrafted furniture units ordered'
+    ),
+    newCustomers: buildKpiObj(
+      'newCustomers',
+      'New Customers',
+      currentMetrics.newCustomers,
+      previousMetrics.newCustomers,
+      String(currentMetrics.newCustomers),
+      String(previousMetrics.newCustomers),
+      `${customers.length} total registered clients`
+    ),
+    totalDiscountsGiven: buildKpiObj(
+      'totalDiscountsGiven',
+      'Total Discounts Given',
+      currentMetrics.totalDiscountsGiven,
+      previousMetrics.totalDiscountsGiven,
+      formatUsd(currentMetrics.totalDiscountsGiven),
+      formatUsd(previousMetrics.totalDiscountsGiven),
+      'Fixed-amount vouchers redeemed'
+    ),
+    averageOrderValue: buildKpiObj(
+      'averageOrderValue',
+      'Average Order Value',
+      currentMetrics.averageOrderValue,
+      previousMetrics.averageOrderValue,
+      formatUsd(currentMetrics.averageOrderValue),
+      formatUsd(previousMetrics.averageOrderValue),
+      'Realized revenue per paid order'
+    ),
+    grossOrderValue: currentMetrics.grossBookedRevenue,
+    processingOrdersCount: currentMetrics.processingOrders,
+    shippedOrdersCount: currentMetrics.shippedOrders,
+  };
+
   const summaryCards = [
-    {
-      key: 'totalRevenue',
-      label: 'Total Revenue',
-      value: currentMetrics.totalRevenue,
-      previousValue: previousMetrics.totalRevenue,
-      formattedValue: formatPeso(currentMetrics.totalRevenue),
-      formattedPreviousValue: formatPeso(previousMetrics.totalRevenue),
-      subtitle: `${currentMetrics.revenueEligibleOrderCount} paid/confirmed order(s)`,
-      comparison: computePercentageChange(currentMetrics.totalRevenue, previousMetrics.totalRevenue),
-    },
-    {
-      key: 'totalOrders',
-      label: 'Total Orders',
-      value: currentMetrics.totalOrders,
-      previousValue: previousMetrics.totalOrders,
-      formattedValue: String(currentMetrics.totalOrders),
-      formattedPreviousValue: String(previousMetrics.totalOrders),
-      subtitle: `Gross booked: ${formatPeso(currentMetrics.grossBookedRevenue)}`,
-      comparison: computePercentageChange(currentMetrics.totalOrders, previousMetrics.totalOrders),
-    },
-    {
-      key: 'completedOrders',
-      label: 'Completed Orders',
-      value: currentMetrics.completedOrders,
-      previousValue: previousMetrics.completedOrders,
-      formattedValue: String(currentMetrics.completedOrders),
-      formattedPreviousValue: String(previousMetrics.completedOrders),
-      subtitle: 'Delivered & settled in full',
-      comparison: computePercentageChange(
-        currentMetrics.completedOrders,
-        previousMetrics.completedOrders
-      ),
-    },
-    {
-      key: 'pendingOrders',
-      label: 'Pending Orders',
-      value: currentMetrics.pendingOrders,
-      previousValue: previousMetrics.pendingOrders,
-      formattedValue: String(currentMetrics.pendingOrders),
-      formattedPreviousValue: String(previousMetrics.pendingOrders),
-      subtitle: `${currentMetrics.processingOrders} in workshop · ${currentMetrics.shippedOrders} ready/shipped`,
-      comparison: computePercentageChange(currentMetrics.pendingOrders, previousMetrics.pendingOrders),
-    },
-    {
-      key: 'cancelledOrders',
-      label: 'Cancelled Orders',
-      value: currentMetrics.cancelledOrders,
-      previousValue: previousMetrics.cancelledOrders,
-      formattedValue: String(currentMetrics.cancelledOrders),
-      formattedPreviousValue: String(previousMetrics.cancelledOrders),
-      subtitle: 'Excluded from realized revenue',
-      comparison: computePercentageChange(
-        currentMetrics.cancelledOrders,
-        previousMetrics.cancelledOrders
-      ),
-    },
-    {
-      key: 'totalProductsSold',
-      label: 'Total Products Sold',
-      value: currentMetrics.totalProductsSold,
-      previousValue: previousMetrics.totalProductsSold,
-      formattedValue: `${currentMetrics.totalProductsSold} pcs`,
-      formattedPreviousValue: `${previousMetrics.totalProductsSold} pcs`,
-      subtitle: 'Handcrafted furniture units ordered',
-      comparison: computePercentageChange(
-        currentMetrics.totalProductsSold,
-        previousMetrics.totalProductsSold
-      ),
-    },
-    {
-      key: 'newCustomers',
-      label: 'New Customers',
-      value: currentMetrics.newCustomers,
-      previousValue: previousMetrics.newCustomers,
-      formattedValue: String(currentMetrics.newCustomers),
-      formattedPreviousValue: String(previousMetrics.newCustomers),
-      subtitle: `${customers.length} total registered clients`,
-      comparison: computePercentageChange(currentMetrics.newCustomers, previousMetrics.newCustomers),
-    },
-    {
-      key: 'totalDiscountsGiven',
-      label: 'Total Discounts Given',
-      value: currentMetrics.totalDiscountsGiven,
-      previousValue: previousMetrics.totalDiscountsGiven,
-      formattedValue: formatPeso(currentMetrics.totalDiscountsGiven),
-      formattedPreviousValue: formatPeso(previousMetrics.totalDiscountsGiven),
-      subtitle: 'Fixed-amount vouchers redeemed',
-      comparison: computePercentageChange(
-        currentMetrics.totalDiscountsGiven,
-        previousMetrics.totalDiscountsGiven
-      ),
-    },
-    {
-      key: 'averageOrderValue',
-      label: 'Average Order Value',
-      value: currentMetrics.averageOrderValue,
-      previousValue: previousMetrics.averageOrderValue,
-      formattedValue: formatPeso(currentMetrics.averageOrderValue),
-      formattedPreviousValue: formatPeso(previousMetrics.averageOrderValue),
-      subtitle: 'Realized revenue per paid order',
-      comparison: computePercentageChange(
-        currentMetrics.averageOrderValue,
-        previousMetrics.averageOrderValue
-      ),
-    },
+    summary.totalRevenue,
+    summary.totalOrders,
+    summary.completedOrders,
+    summary.pendingOrders,
+    summary.cancelledOrders,
+    summary.totalProductsSold,
+    summary.newCustomers,
+    summary.totalDiscountsGiven,
+    summary.averageOrderValue,
   ];
 
   // 4. Sales and Revenue Analytics
@@ -3577,8 +3660,10 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
     let dayRev = 0;
     let dayUnits = 0;
     let nonCancelledCount = 0;
+    let completedDayCount = 0;
     dayOrders.forEach((ord) => {
       const st = classifyAnalyticsOrderStatus(ord);
+      if (st === 'Completed') completedDayCount += 1;
       if (st !== 'Cancelled') {
         nonCancelledCount += 1;
         dayUnits += Math.max(1, Number(ord.quantity || 1));
@@ -3587,12 +3672,17 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
         }
       }
     });
+    const shortLbl = `${MONTH_NAMES_SHORT[range.selectedMonth - 1]} ${d}`;
     dailySeries.push({
       date: dateKey,
       dayOfMonth: d,
-      shortLabel: `${MONTH_NAMES_SHORT[range.selectedMonth - 1]} ${d}`,
+      dayLabel: String(d),
+      label: shortLbl,
+      shortLabel: shortLbl,
       revenue: Math.round(dayRev),
+      orders: dayOrders.length,
       orderCount: dayOrders.length,
+      completedOrders: completedDayCount,
       nonCancelledOrderCount: nonCancelledCount,
       unitsSold: dayUnits,
     });
@@ -3609,15 +3699,20 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
     const momChange = computePercentageChange(mWindow.totalRevenue, prevMonthRev);
 
     monthlySeries.push({
+      month: m,
       monthIndex: m,
       monthKey: `${range.selectedYear}-${pad2(m)}`,
       monthName: MONTH_NAMES_FULL[m - 1],
+      fullLabel: `${MONTH_NAMES_FULL[m - 1]} ${range.selectedYear}`,
+      label: MONTH_NAMES_SHORT[m - 1],
       shortName: MONTH_NAMES_SHORT[m - 1],
       revenue: mWindow.totalRevenue,
       grossBookedRevenue: mWindow.grossBookedRevenue,
+      orders: mWindow.totalOrders,
       orderCount: mWindow.totalOrders,
       completedOrders: mWindow.completedOrders,
       productsSold: mWindow.totalProductsSold,
+      vsPreviousMonth: momChange,
       monthOverMonthChange: momChange,
       isSelectedMonth: m === range.selectedMonth,
     });
@@ -3632,6 +3727,7 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
       categoryName: cat.name,
       revenue: 0,
       unitsSold: 0,
+      orders: 0,
       orderCount: 0,
     });
   });
@@ -3642,7 +3738,12 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
     if (rawCat.includes('living') || rawCat.includes('lounge')) return 'living';
     if (rawCat.includes('dining')) return 'dining';
     if (rawCat.includes('bed')) return 'bedroom';
-    if (rawCat.includes('study') || rawCat.includes('office') || rawCat.includes('credenza') || rawCat.includes('desk')) {
+    if (
+      rawCat.includes('study') ||
+      rawCat.includes('office') ||
+      rawCat.includes('credenza') ||
+      rawCat.includes('desk')
+    ) {
       return 'office';
     }
     if (rawCat.includes('kitchen')) return 'kitchen';
@@ -3663,10 +3764,12 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
         categoryName: ord.categoryName || 'Collection',
         revenue: 0,
         unitsSold: 0,
+        orders: 0,
         orderCount: 0,
       });
     }
     const bucket = categoryMap.get(slug);
+    bucket.orders += 1;
     bucket.orderCount += 1;
     bucket.unitsSold += Math.max(1, Number(ord.quantity || 1));
     if (isOrderPaidOrDepositConfirmed(ord)) {
@@ -3696,22 +3799,29 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
       : revComparison.percentChange < 0
       ? 'Declining'
       : 'Stable';
+  const performanceDirection = performanceStatus.toLowerCase();
+  const performanceInsight =
+    performanceStatus === 'Improving'
+      ? `Realized revenue increased by ${revComparison.formatted} (${formatUsd(currentMetrics.totalRevenue)} vs ${formatUsd(previousMetrics.totalRevenue)} in ${range.previousPeriodLabel}).`
+      : performanceStatus === 'Declining'
+      ? `Realized revenue shifted by ${revComparison.formatted} (${formatUsd(currentMetrics.totalRevenue)} vs ${formatUsd(previousMetrics.totalRevenue)} in ${range.previousPeriodLabel}) while workshop orders remain in production.`
+      : `Realized revenue is steady at ${formatUsd(currentMetrics.totalRevenue)} compared to ${range.previousPeriodLabel}.`;
 
   const salesAnalytics = {
+    year: range.selectedYear,
     dailySeries,
     monthlySeries,
+    monthlyComparison: monthlySeries,
     categoryRevenue,
+    revenueByCategory: categoryRevenue,
+    performanceDirection,
+    performanceInsight,
     performanceTrend: {
       status: performanceStatus,
       comparison: revComparison,
       currentRevenue: currentMetrics.totalRevenue,
       previousRevenue: previousMetrics.totalRevenue,
-      summaryText:
-        performanceStatus === 'Improving'
-          ? `Realized revenue increased by ${revComparison.formatted} (${formatPeso(currentMetrics.totalRevenue)} vs ${formatPeso(previousMetrics.totalRevenue)} in ${range.previousPeriodLabel}).`
-          : performanceStatus === 'Declining'
-          ? `Realized revenue shifted by ${revComparison.formatted} (${formatPeso(currentMetrics.totalRevenue)} vs ${formatPeso(previousMetrics.totalRevenue)} in ${range.previousPeriodLabel}) while workshop orders remain in production.`
-          : `Realized revenue is steady at ${formatPeso(currentMetrics.totalRevenue)} compared to ${range.previousPeriodLabel}.`,
+      summaryText: performanceInsight,
     },
   };
 
@@ -3775,7 +3885,7 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
   });
 
   const allProductRankings = Array.from(productSalesMap.values())
-    .sort((a, b) => b.quantitySold - a.quantitySold || b.totalRevenue - a.totalRevenue || a.name.localeCompare(b.name))
+    .sort((a, b) => b.totalRevenue - a.totalRevenue || b.quantitySold - a.quantitySold || a.name.localeCompare(b.name))
     .map((item, idx) => ({
       ...item,
       rank: idx + 1,
@@ -3787,39 +3897,46 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
     .sort((a, b) => a.quantitySold - b.quantitySold || a.totalRevenue - b.totalRevenue)
     .slice(0, 5);
 
-  const productAnalytics = {
+  const bestSellingProducts = {
     allRankedProducts: allProductRankings,
+    topFive: topFiveProducts,
     topFiveProducts,
+    lowSellingProducts: lowPerformingProducts,
     lowPerformingProducts,
   };
 
   // 6. Order Analytics (Status Distribution using actual system statuses)
   const statusDefs = [
     {
+      status: 'Pending',
       statusKey: 'Pending',
       label: 'Pending',
       sqlStatusLabel: 'Pending · Timber Selection',
       color: '#D97706',
     },
     {
+      status: 'Processing',
       statusKey: 'Processing',
       label: 'Processing',
       sqlStatusLabel: 'InProduction · Workshop Joinery',
       color: '#0095FF',
     },
     {
+      status: 'Shipped',
       statusKey: 'Shipped',
       label: 'Shipped',
       sqlStatusLabel: 'Ready · Dispatched / Transit',
       color: '#6366F1',
     },
     {
+      status: 'Completed',
       statusKey: 'Completed',
       label: 'Completed',
       sqlStatusLabel: 'Delivered · Completed',
       color: '#059669',
     },
     {
+      status: 'Cancelled',
       statusKey: 'Cancelled',
       label: 'Cancelled',
       sqlStatusLabel: 'Cancelled',
@@ -3846,19 +3963,24 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
   const totalPeriodOrdersDenom = Math.max(1, currentMetrics.totalOrders);
   const statusDistribution = statusDefs.map((def) => {
     const data = statusCounts[def.statusKey] || { count: 0, totalAmount: 0 };
+    const sharePercent =
+      currentMetrics.totalOrders > 0
+        ? Math.round((data.count / totalPeriodOrdersDenom) * 1000) / 10
+        : 0;
+    const totalAmt = Math.round(data.totalAmount);
     return {
       ...def,
       count: data.count,
-      totalAmount: Math.round(data.totalAmount),
-      sharePercent:
-        currentMetrics.totalOrders > 0
-          ? Math.round((data.count / totalPeriodOrdersDenom) * 1000) / 10
-          : 0,
+      totalAmount: totalAmt,
+      totalValue: totalAmt,
+      sharePercent,
+      percentage: sharePercent,
     };
   });
 
   const orderAnalytics = {
     totalOrders: currentMetrics.totalOrders,
+    distribution: statusDistribution,
     statusDistribution,
   };
 
@@ -3913,6 +4035,7 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
   const returningCustomers = allCustomerStats.filter(
     (c) => c.periodOrders > 0 && c.lifetimeOrders > 1
   );
+  const lifetimeReturningCustomers = allCustomerStats.filter((c) => c.lifetimeOrders > 1);
   const topCustomers = [...allCustomerStats]
     .sort((a, b) => b.periodSpent - a.periodSpent || b.lifetimeSpent - a.lifetimeSpent)
     .map((c, idx) => ({
@@ -3938,8 +4061,10 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
         .map((o) => String(o.clientEmail || '').toLowerCase())
     );
     monthlyRegistrationTrend.push({
+      month: m,
       monthIndex: m,
       monthName: MONTH_NAMES_FULL[m - 1],
+      label: MONTH_NAMES_SHORT[m - 1],
       shortName: MONTH_NAMES_SHORT[m - 1],
       newRegistrations: regCount,
       activeBuyers: activeBuyerEmails.size,
@@ -3949,10 +4074,14 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
   const customerAnalytics = {
     newCustomersCount: currentMetrics.newCustomers,
     newCustomersList: currentMetrics.newCustomersList,
+    customersWhoPlacedOrdersCount: orderingCustomers.length,
     orderingCustomersCount: orderingCustomers.length,
     returningCustomersCount: returningCustomers.length,
+    totalLifetimeReturningCustomers: lifetimeReturningCustomers.length,
     totalRegisteredCustomers: allCustomerStats.length,
+    highestPurchaseCustomers: topCustomers,
     topCustomers,
+    monthlyRegistrationTrends: monthlyRegistrationTrend,
     monthlyRegistrationTrend,
   };
 
@@ -3968,7 +4097,32 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
   const materialsRequiringRestock = [
     ...materialMetrics.outOfStockItems,
     ...materialMetrics.lowStockItems,
-  ];
+  ].map((m) => {
+    const st = getMaterialStockStatus(m);
+    return {
+      ...m,
+      materialId: m.materialId || m.code || 'MAT-01',
+      category: m.materialType || 'Solid Timber',
+      quantity: st.availableStock,
+      minimumStock: st.minStockLevel,
+      unit: m.unit || 'units',
+      status: st.label,
+    };
+  });
+
+  const lowStockProductsNormalized = (productMetrics.lowStockItems || []).map((p) => ({
+    ...p,
+    productId: p.productId || p.sku || 'LR-ITEM',
+    stock: Math.max(0, Number(p.inStockCount ?? 0)),
+    minStock: Math.max(0, Number(p.minStockLevel ?? 2)),
+  }));
+
+  const outOfStockProductsNormalized = (productMetrics.outOfStockItems || []).map((p) => ({
+    ...p,
+    productId: p.productId || p.sku || 'LR-ITEM',
+    stock: Math.max(0, Number(p.inStockCount ?? 0)),
+    minStock: Math.max(0, Number(p.minStockLevel ?? 2)),
+  }));
 
   const periodInvTransactions = inventoryTransactions.filter((tx) =>
     isWithinRange(tx.dateTime || tx.date, range.startDate, range.endDate)
@@ -3982,18 +4136,28 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
       const existing = consumedByMaterial.get(mId) || {
         materialId: tx.materialId,
         materialCode: tx.materialCode || 'MAT-01',
+        code: tx.materialCode || 'MAT-01',
         materialName: tx.materialName || 'Material',
+        name: tx.materialName || 'Material',
         materialType: tx.materialType || 'Solid Timber',
         unit: tx.unit || 'units',
         quantityConsumed: 0,
+        unitsConsumed: 0,
         unitCost: Number(tx.unitCost || 0),
         estimatedCost: 0,
+        totalCost: 0,
         transactionCount: 0,
+        transactionsCount: 0,
+        lastReason: tx.reason || 'Workshop Production',
       };
       const qty = Math.max(0, Number(tx.quantity || 0));
       existing.quantityConsumed += qty;
+      existing.unitsConsumed += qty;
       existing.estimatedCost += Math.round(qty * existing.unitCost);
+      existing.totalCost = existing.estimatedCost;
       existing.transactionCount += 1;
+      existing.transactionsCount = existing.transactionCount;
+      if (tx.reason) existing.lastReason = tx.reason;
       consumedByMaterial.set(mId, existing);
     });
 
@@ -4010,20 +4174,32 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
     const matObj = materials.find((m) => m.id === mId) || null;
     const qtyUsed = Math.max(0, Number(ord.materialQtyUsed || 0));
     if (qtyUsed <= 0) return;
+    const mCode = matObj?.materialId || matObj?.code || 'MAT-01';
+    const mName = ord.materialName || matObj?.name || 'Workshop Material';
     const existing = consumedByMaterial.get(mId) || {
       materialId: mId,
-      materialCode: matObj?.materialId || matObj?.code || 'MAT-01',
-      materialName: ord.materialName || matObj?.name || 'Workshop Material',
+      materialCode: mCode,
+      code: mCode,
+      materialName: mName,
+      name: mName,
       materialType: matObj?.materialType || 'Solid Timber',
       unit: ord.materialUnit || matObj?.unit || 'units',
       quantityConsumed: 0,
+      unitsConsumed: 0,
       unitCost: Number(matObj?.unitCost || 0),
       estimatedCost: 0,
+      totalCost: 0,
       transactionCount: 0,
+      transactionsCount: 0,
+      lastReason: `Allocated to Order #${ordNum}`,
     };
     existing.quantityConsumed += qtyUsed;
+    existing.unitsConsumed += qtyUsed;
     existing.estimatedCost += Math.round(qtyUsed * existing.unitCost);
+    existing.totalCost = existing.estimatedCost;
     existing.transactionCount += 1;
+    existing.transactionsCount = existing.transactionCount;
+    existing.lastReason = `Allocated to Order #${ordNum}`;
     consumedByMaterial.set(mId, existing);
   });
 
@@ -4052,28 +4228,41 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
     0
   );
 
+  const availableProductsCount = products.filter((p) => Number(p?.inStockCount ?? 0) > 0).length;
+
   const inventoryAnalytics = {
     currentSnapshot: {
-      totalAvailableProducts: products.length,
+      totalAvailableProducts: availableProductsCount,
+      totalCatalogProducts: products.length,
+      totalAvailableUnits: productMetrics.totalStockAvailable,
       totalProductUnitsInStock: productMetrics.totalStockAvailable,
       lowStockProductsCount: productMetrics.lowStockCount,
-      lowStockProducts: productMetrics.lowStockItems,
+      lowStockProducts: lowStockProductsNormalized,
       outOfStockProductsCount: productMetrics.outOfStockCount,
-      outOfStockProducts: productMetrics.outOfStockItems,
+      outOfStockProducts: outOfStockProductsNormalized,
       totalMaterials: materials.length,
+      materialsRequiringRestockingCount: materialsRequiringRestock.length,
       materialsRequiringRestockCount: materialsRequiringRestock.length,
+      materialsRequiringRestocking: materialsRequiringRestock,
       materialsRequiringRestock,
+      materialInventoryValue: materialMetrics.totalInventoryValue,
       currentMaterialInventoryValue: materialMetrics.totalInventoryValue,
+      catalogInventoryValue: currentProductCatalogValue,
       currentProductCatalogValue,
       currentInventoryValue: materialMetrics.totalInventoryValue + currentProductCatalogValue,
     },
     periodMovements: {
       periodLabel: range.periodLabel,
+      totalMovementsCount: periodInvTransactions.length,
       materialsConsumedInPeriod,
+      totalUnitsConsumed: totalMaterialUnitsConsumed,
       totalMaterialUnitsConsumed,
+      totalConsumedValue: totalMaterialCostConsumed,
       totalMaterialCostConsumed,
       stockInCount: stockInTransactionsInPeriod.length,
+      totalUnitsRestocked: totalMaterialUnitsRestocked,
       totalMaterialUnitsRestocked,
+      totalRestockedCost: Math.round(totalRestockSpend),
       totalRestockSpend: Math.round(totalRestockSpend),
       periodTransactions: periodInvTransactions,
     },
@@ -4081,17 +4270,24 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
 
   // 9. Voucher Analytics
   const normalizedVouchers = vouchers.map((v) => {
-    const statusInfo = computeVoucherStatusInfo(v, nowMs);
+    const statusInfo = computeVoucherStatusInfo(v, effectiveNowMs);
     const issuedDate = parseManilaDateOnly(v.issuedAt || v.createdAt);
     const expiryDate = parseManilaDateOnly(v.expiresAt || v.expiryDate);
+    const issuedDisp = formatVoucherIssuedDisplay(v);
+    const expiryDisp = formatVoucherExpiryDisplay(v);
     return {
       ...v,
       voucherId: v.voucherId || generateOwnEntityId('voucher', v.code || v.id).codeId,
+      productName: v.furnitureName || v.productName || 'Showroom Piece',
+      discountAmount: Math.max(0, Number(v.discountAmount ?? v.discountValue ?? 0)),
       effectiveStatus: statusInfo.status,
+      status: statusInfo.status,
       badgeClass: statusInfo.badgeClass,
       remainingLabel: statusInfo.remainingLabel,
-      issuedDisplay: formatVoucherIssuedDisplay(v),
-      expiryDisplay: formatVoucherExpiryDisplay(v),
+      issuedDisplay: issuedDisp,
+      expiryDisplay: expiryDisp,
+      issuedAt: issuedDisp.full || v.createdAt || '—',
+      expiresAt: expiryDisp.full || v.expiryDate || 'No expiry',
       issuedDate,
       expiryDate,
       inSelectedPeriod:
@@ -4101,22 +4297,22 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
     };
   });
 
-  // Vouchers issued in period (or all vouchers if preset is 'this_year' / or provide both period and total)
   const vouchersInPeriod = normalizedVouchers.filter((v) =>
     isWithinRange(v.issuedDate, range.startDate, range.endDate)
   );
-  const targetVoucherPool = vouchersInPeriod.length > 0 ? normalizedVouchers : normalizedVouchers;
 
   let activeVouchers = 0;
   let expiringSoonVouchers = 0;
   let redeemedVouchers = 0;
+  let redeemedInPeriodCount = 0;
   let expiredVouchers = 0;
   let revokedVouchers = 0;
   let totalDiscountIssued = 0;
   let totalDiscountRedeemed = 0;
+  let periodDiscountRedeemed = 0;
 
-  targetVoucherPool.forEach((v) => {
-    const amt = Math.max(0, Number(v.discountAmount ?? v.discountValue ?? 0));
+  normalizedVouchers.forEach((v) => {
+    const amt = v.discountAmount;
     totalDiscountIssued += amt;
     if (v.effectiveStatus === 'Active') {
       activeVouchers += 1;
@@ -4126,6 +4322,10 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
     } else if (v.effectiveStatus === 'Used') {
       redeemedVouchers += 1;
       totalDiscountRedeemed += amt;
+      if (isWithinRange(v.redeemedAt || v.issuedDate, range.startDate, range.endDate)) {
+        redeemedInPeriodCount += 1;
+        periodDiscountRedeemed += amt;
+      }
     } else if (v.effectiveStatus === 'Expired') {
       expiredVouchers += 1;
     } else if (v.effectiveStatus === 'Revoked' || v.effectiveStatus === 'Cancelled') {
@@ -4133,34 +4333,74 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
     }
   });
 
-  // Also include order-level voucher discounts redeemed in period
   const orderVoucherDiscountsInPeriod = currentMetrics.totalDiscountsGiven;
   const effectiveDiscountRedeemed = Math.max(totalDiscountRedeemed, orderVoucherDiscountsInPeriod);
-  const totalVouchersIssued = targetVoucherPool.length;
+  const effectivePeriodDiscountRedeemed = Math.max(periodDiscountRedeemed, orderVoucherDiscountsInPeriod);
+  const totalVouchersIssued = normalizedVouchers.length;
   const redemptionRate =
     totalVouchersIssued > 0
       ? Math.round((redeemedVouchers / totalVouchersIssued) * 1000) / 10
       : 0;
+  const periodRedemptionRate =
+    vouchersInPeriod.length > 0
+      ? Math.round((redeemedInPeriodCount / vouchersInPeriod.length) * 1000) / 10
+      : 0;
 
   const voucherAnalytics = {
     totalVouchersIssued,
+    totalIssuedInPeriod: vouchersInPeriod.length,
     vouchersIssuedInSelectedPeriod: vouchersInPeriod.length,
     activeVouchers,
     expiringSoonVouchers,
     redeemedVouchers,
+    redeemedInPeriodCount,
     expiredVouchers,
     revokedVouchers,
     totalDiscountIssued: Math.round(totalDiscountIssued),
     totalDiscountRedeemed: Math.round(effectiveDiscountRedeemed),
+    periodDiscountRedeemed: Math.round(effectivePeriodDiscountRedeemed),
     redemptionRate,
+    periodRedemptionRate,
+    voucherBreakdown: normalizedVouchers,
     vouchers: normalizedVouchers,
   };
 
+  const transactions = currentMetrics.periodOrders.map((ord) => {
+    const statusBucket = classifyAnalyticsOrderStatus(ord);
+    const historicalAmt = getHistoricalOrderAmount(ord);
+    const paid = isOrderPaidOrDepositConfirmed(ord);
+    const disc = Math.max(0, Number(ord.voucherDiscountAmount || 0));
+    return {
+      orderId: ord.orderId || ord.orderNumber,
+      orderNumber: ord.orderNumber || ord.orderId,
+      orderDate: ord.orderDate,
+      clientName: ord.clientName,
+      clientEmail: ord.clientEmail,
+      furnitureName: ord.furnitureName,
+      productId: ord.sku || ord.furnitureId,
+      sku: ord.sku || ord.furnitureId,
+      quantity: Math.max(1, Number(ord.quantity || 1)),
+      totalAmount: historicalAmt,
+      depositPaid: Math.max(0, Number(ord.depositPaid || 0)),
+      discountAmount: disc,
+      voucherDiscountAmount: disc,
+      appliedVoucherCode: ord.appliedVoucherCode || null,
+      normalizedStatus: statusBucket,
+      statusBucket,
+      stageLabel: ord.status,
+      paymentStatus: ord.paymentStatus || 'Pending',
+      realizedRevenue: paid ? historicalAmt : 0,
+    };
+  });
+
   return {
     businessName: 'Lillia and Rowena Furniture',
-    generatedAtIso: new Date(nowMs).toISOString(),
-    generatedAtManila: formatManilaDateTimeParts(new Date(nowMs).toISOString()).full,
+    generatedAtIso: new Date(effectiveNowMs).toISOString(),
+    generatedAtManila: formatManilaDateTimeParts(new Date(effectiveNowMs).toISOString()).full,
     dateRange: range,
+    period: range.current,
+    previousPeriod: range.previous,
+    summary,
     summaryCards,
     kpis: {
       totalRevenue: currentMetrics.totalRevenue,
@@ -4174,27 +4414,14 @@ export function computeMonthlyAnalyticsReport(storeData = {}, filterOptions = {}
       averageOrderValue: currentMetrics.averageOrderValue,
     },
     salesAnalytics,
-    productAnalytics,
+    bestSellingProducts,
+    productAnalytics: bestSellingProducts,
     orderAnalytics,
     customerAnalytics,
     inventoryAnalytics,
     voucherAnalytics,
-    periodOrders: currentMetrics.periodOrders.map((ord) => ({
-      orderId: ord.orderId || ord.orderNumber,
-      orderNumber: ord.orderNumber || ord.orderId,
-      orderDate: ord.orderDate,
-      clientName: ord.clientName,
-      clientEmail: ord.clientEmail,
-      furnitureName: ord.furnitureName,
-      sku: ord.sku,
-      quantity: Math.max(1, Number(ord.quantity || 1)),
-      totalAmount: getHistoricalOrderAmount(ord),
-      depositPaid: Math.max(0, Number(ord.depositPaid || 0)),
-      voucherDiscountAmount: Math.max(0, Number(ord.voucherDiscountAmount || 0)),
-      appliedVoucherCode: ord.appliedVoucherCode || null,
-      statusBucket: classifyAnalyticsOrderStatus(ord),
-      stageLabel: ord.status,
-    })),
+    transactions,
+    periodOrders: transactions,
   };
 }
 
@@ -4210,10 +4437,10 @@ export function buildAnalyticsCsvContent(report) {
 
   const lines = [];
   lines.push(['Business Name', esc(report.businessName || 'Lillia and Rowena Furniture')].join(','));
-  lines.push(['Report Period', esc(report.dateRange?.periodLabel || '')].join(','));
+  lines.push(['Report Period', esc(report.dateRange?.periodLabel || report.period?.label || '')].join(','));
   lines.push([
     'Date Range',
-    esc(`${report.dateRange?.startDate || ''} to ${report.dateRange?.endDate || ''}`),
+    esc(`${report.dateRange?.startDate || report.period?.startDate || ''} to ${report.dateRange?.endDate || report.period?.endDate || ''}`),
   ].join(','));
   lines.push(['Generated Date (PHT)', esc(report.generatedAtManila || '')].join(','));
   lines.push('');
@@ -4226,7 +4453,7 @@ export function buildAnalyticsCsvContent(report) {
         esc(card.label),
         esc(card.formattedValue),
         esc(card.formattedPreviousValue),
-        esc(card.comparison?.formatted || '0.0%'),
+        esc(card.comparison?.formatted || card.formattedChange || '0.0%'),
       ].join(',')
     );
   });
@@ -4234,9 +4461,9 @@ export function buildAnalyticsCsvContent(report) {
 
   lines.push('BEST-SELLING PRODUCTS');
   lines.push(
-    ['Rank', 'Product ID', 'Product Name', 'Category', 'Quantity Sold', 'Total Revenue (PHP)', 'Stock Availability'].join(',')
+    ['Rank', 'Product ID', 'Product Name', 'Category', 'Quantity Sold', 'Total Revenue ($)', 'Stock Availability'].join(',')
   );
-  (report.productAnalytics?.allRankedProducts || []).forEach((p) => {
+  (report.bestSellingProducts?.allRankedProducts || report.productAnalytics?.allRankedProducts || []).forEach((p) => {
     lines.push(
       [
         esc(p.rank),
@@ -4244,7 +4471,7 @@ export function buildAnalyticsCsvContent(report) {
         esc(p.name),
         esc(p.categoryName),
         esc(p.quantitySold),
-        esc(`PHP ${p.totalRevenue}`),
+        esc(`$${p.totalRevenue}`),
         esc(`${p.currentStock} (${p.stockStatusLabel})`),
       ].join(',')
     );
@@ -4259,7 +4486,7 @@ export function buildAnalyticsCsvContent(report) {
       'Redeemed',
       'Expired',
       'Revoked',
-      'Total Discount Redeemed (PHP)',
+      'Total Discount Redeemed ($)',
       'Redemption Rate (%)',
     ].join(',')
   );
@@ -4271,7 +4498,7 @@ export function buildAnalyticsCsvContent(report) {
       esc(va.redeemedVouchers ?? 0),
       esc(va.expiredVouchers ?? 0),
       esc(va.revokedVouchers ?? 0),
-      esc(`PHP ${va.totalDiscountRedeemed ?? 0}`),
+      esc(`$${va.totalDiscountRedeemed ?? 0}`),
       esc(`${va.redemptionRate ?? 0}%`),
     ].join(',')
   );
@@ -4287,12 +4514,12 @@ export function buildAnalyticsCsvContent(report) {
       'Product',
       'Product ID',
       'Qty',
-      'Order Total (PHP)',
-      'Discount (PHP)',
+      'Order Total ($)',
+      'Discount ($)',
       'Status',
     ].join(',')
   );
-  (report.periodOrders || []).forEach((ord) => {
+  (report.transactions || report.periodOrders || []).forEach((ord) => {
     lines.push(
       [
         esc(ord.orderId),
@@ -4302,8 +4529,8 @@ export function buildAnalyticsCsvContent(report) {
         esc(ord.furnitureName),
         esc(ord.sku),
         esc(ord.quantity),
-        esc(`PHP ${ord.totalAmount}`),
-        esc(`PHP ${ord.voucherDiscountAmount}`),
+        esc(`$${ord.totalAmount}`),
+        esc(`$${ord.voucherDiscountAmount}`),
         esc(ord.statusBucket),
       ].join(',')
     );
@@ -4315,7 +4542,7 @@ export function buildAnalyticsCsvContent(report) {
 export function buildAnalyticsPdfBytes(report) {
   const safeAscii = (str) =>
     String(str ?? '')
-      .replace(/₱/g, 'PHP ')
+      .replace(/₱/g, '$')
       .replace(/[—–]/g, '-')
       .replace(/×/g, 'x')
       .replace(/[^\x20-\x7E]/g, '')
@@ -4323,27 +4550,27 @@ export function buildAnalyticsPdfBytes(report) {
 
   const lines = [];
   lines.push(`LILLIA AND ROWENA FURNITURE - MONTHLY ANALYTICS & BUSINESS REPORT`);
-  lines.push(`Reporting Period: ${report?.dateRange?.periodLabel || 'Current Period'} (${report?.dateRange?.startDate || ''} to ${report?.dateRange?.endDate || ''})`);
+  lines.push(`Reporting Period: ${report?.dateRange?.periodLabel || report?.period?.label || 'Current Period'} (${report?.dateRange?.startDate || report?.period?.startDate || ''} to ${report?.dateRange?.endDate || report?.period?.endDate || ''})`);
   lines.push(`Generated On: ${report?.generatedAtManila || ''} (Asia/Manila)`);
   lines.push(`--------------------------------------------------------------------------------`);
   lines.push(`1. EXECUTIVE BUSINESS SUMMARY`);
   (report?.summaryCards || []).forEach((card) => {
     lines.push(
-      `   - ${card.label}: ${card.formattedValue} (Prior: ${card.formattedPreviousValue} | ${card.comparison?.formatted || '0.0%'})`
+      `   - ${card.label}: ${card.formattedValue} (Prior: ${card.formattedPreviousValue} | ${card.comparison?.formatted || card.formattedChange || '0.0%'})`
     );
   });
   lines.push(`--------------------------------------------------------------------------------`);
   lines.push(`2. TOP 5 BEST-SELLING PRODUCTS`);
-  (report?.productAnalytics?.topFiveProducts || []).forEach((p) => {
+  (report?.bestSellingProducts?.topFive || report?.productAnalytics?.topFiveProducts || []).forEach((p) => {
     lines.push(
-      `   #${p.rank} [${p.productId}] ${p.name} (${p.categoryName}) - Sold: ${p.quantitySold} pcs | Revenue: PHP ${p.totalRevenue.toLocaleString('en-US')} | Stock: ${p.currentStock}`
+      `   #${p.rank} [${p.productId}] ${p.name} (${p.categoryName}) - Sold: ${p.quantitySold} pcs | Revenue: $${p.totalRevenue.toLocaleString('en-US')} | Stock: ${p.currentStock}`
     );
   });
   lines.push(`--------------------------------------------------------------------------------`);
   lines.push(`3. ORDER STATUS DISTRIBUTION`);
-  (report?.orderAnalytics?.statusDistribution || []).forEach((s) => {
+  (report?.orderAnalytics?.distribution || report?.orderAnalytics?.statusDistribution || []).forEach((s) => {
     lines.push(
-      `   - ${s.label}: ${s.count} order(s) (${s.sharePercent}%) - Total: PHP ${s.totalAmount.toLocaleString('en-US')}`
+      `   - ${s.label}: ${s.count} order(s) (${s.sharePercent}%) - Total: $${s.totalAmount.toLocaleString('en-US')}`
     );
   });
   lines.push(`--------------------------------------------------------------------------------`);
@@ -4352,22 +4579,22 @@ export function buildAnalyticsPdfBytes(report) {
     `4. VOUCHER ANALYTICS: Issued: ${va.totalVouchersIssued || 0} | Active: ${va.activeVouchers || 0} | Redeemed: ${va.redeemedVouchers || 0} | Expired: ${va.expiredVouchers || 0} | Revoked: ${va.revokedVouchers || 0}`
   );
   lines.push(
-    `   Total Discount Redeemed: PHP ${(va.totalDiscountRedeemed || 0).toLocaleString('en-US')} | Redemption Rate: ${va.redemptionRate || 0}%`
+    `   Total Discount Redeemed: $${(va.totalDiscountRedeemed || 0).toLocaleString('en-US')} | Redemption Rate: ${va.redemptionRate || 0}%`
   );
   lines.push(`--------------------------------------------------------------------------------`);
   const inv = report?.inventoryAnalytics?.currentSnapshot || {};
   const mov = report?.inventoryAnalytics?.periodMovements || {};
   lines.push(
-    `5. INVENTORY ANALYTICS: Available Products: ${inv.totalAvailableProducts || 0} | Low Stock: ${inv.lowStockProductsCount || 0} | Needs Restock: ${inv.materialsRequiringRestockCount || 0}`
+    `5. INVENTORY ANALYTICS: Available Products: ${inv.totalAvailableProducts || 0} | Low Stock: ${inv.lowStockProductsCount || 0} | Needs Restock: ${inv.materialsRequiringRestockingCount || 0}`
   );
   lines.push(
-    `   Current Combined Inventory Value: PHP ${(inv.currentInventoryValue || 0).toLocaleString('en-US')} | Period Material Consumed Cost: PHP ${(mov.totalMaterialCostConsumed || 0).toLocaleString('en-US')}`
+    `   Current Combined Inventory Value: $${(inv.currentInventoryValue || 0).toLocaleString('en-US')} | Period Material Consumed Cost: $${(mov.totalMaterialCostConsumed || 0).toLocaleString('en-US')}`
   );
   lines.push(`--------------------------------------------------------------------------------`);
-  lines.push(`6. PERIOD TRANSACTIONS (${(report?.periodOrders || []).length} record(s))`);
-  (report?.periodOrders || []).slice(0, 12).forEach((ord) => {
+  lines.push(`6. PERIOD TRANSACTIONS (${(report?.transactions || report?.periodOrders || []).length} record(s))`);
+  (report?.transactions || report?.periodOrders || []).slice(0, 12).forEach((ord) => {
     lines.push(
-      `   ${ord.orderId} | ${ord.orderDate} | ${ord.clientName} | ${ord.sku} (x${ord.quantity}) | PHP ${ord.totalAmount.toLocaleString('en-US')} | ${ord.statusBucket}`
+      `   ${ord.orderId} | ${ord.orderDate} | ${ord.clientName} | ${ord.sku} (x${ord.quantity}) | $${ord.totalAmount.toLocaleString('en-US')} | ${ord.statusBucket}`
     );
   });
 

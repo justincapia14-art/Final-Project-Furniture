@@ -200,10 +200,49 @@ class AnalyticsReport
                 ':endDate'   => $endDate,
             ]);
 
+            $bestSellingSql = "
+                SELECT p.ProductID AS productId,
+                       p.ProductName AS productName,
+                       c.CategoryName AS categoryName,
+                       COALESCE(SUM(oi.Quantity), 0) AS quantitySold,
+                       COALESCE(SUM(oi.Quantity * oi.UnitPrice), 0) AS totalRevenue
+                FROM Product p
+                INNER JOIN Category c ON c.CategoryID = p.CategoryID
+                LEFT JOIN Order_Item oi ON oi.ProductID = p.ProductID
+                LEFT JOIN Customer_Order co ON co.OrderID = oi.OrderID
+                    AND co.OrderDate BETWEEN :startDate AND :endDate
+                    AND co.Status <> 'Cancelled'
+                GROUP BY p.ProductID, p.ProductName, c.CategoryName
+                ORDER BY totalRevenue DESC, quantitySold DESC
+            ";
+            $bestSellingRows = $this->db->fetchAll($bestSellingSql, [
+                ':startDate' => $startDate,
+                ':endDate'   => $endDate,
+            ]);
+
+            $voucherSql = "
+                SELECT v.Status AS status,
+                       COUNT(*) AS voucherCount,
+                       COALESCE(SUM(v.DiscountValue), 0) AS totalDiscountValue
+                FROM Voucher v
+                GROUP BY v.Status
+            ";
+            $voucherRows = $this->db->fetchAll($voucherSql);
+
+            $materialSql = "
+                SELECT COUNT(*) AS totalMaterials,
+                       COALESCE(SUM(m.StockQuantity * m.UnitCost), 0) AS totalMaterialValue
+                FROM Material m
+            ";
+            $materialRow = $this->db->fetch($materialSql);
+
             return [
                 'summary'              => $summaryRow,
                 'statusDistribution'   => $statusRows,
                 'categoryDistribution' => $categoryRows,
+                'bestSellingProducts'  => $bestSellingRows,
+                'voucherAggregates'    => $voucherRows,
+                'materialAggregates'   => $materialRow,
             ];
         } catch (\Throwable) {
             return null;
@@ -225,12 +264,51 @@ class AnalyticsReport
         $vouchers = isset($store['vouchers']) && is_array($store['vouchers'])
             ? $this->productModel->normalizeVouchersStatus($store['vouchers'])
             : [];
+        $orders = isset($store['orders']) && is_array($store['orders']) ? $store['orders'] : [];
+
+        $curRevenue = 0.0;
+        $prevRevenue = 0.0;
+        $curOrdersCount = 0;
+        $prevOrdersCount = 0;
+
+        foreach ($orders as $ord) {
+            if (!is_array($ord)) {
+                continue;
+            }
+            $ordDate = substr(trim((string) ($ord['orderDate'] ?? '')), 0, 10);
+            $rawStatus = strtolower((string) ($ord['sqlStatus'] ?? $ord['status'] ?? ''));
+            $isCancelled = str_contains($rawStatus, 'cancel');
+            $payStatus = strtolower((string) ($ord['paymentStatus'] ?? ''));
+            $totalAmt = (float) ($ord['totalAmount'] ?? 0);
+            $depPaid = (float) ($ord['depositPaid'] ?? 0);
+            $isRealized = !$isCancelled && ($depPaid > 0 || str_contains($payStatus, 'paid') || str_contains($rawStatus, 'deliver') || str_contains($rawStatus, 'complete'));
+            $realizedRev = $isRealized ? $totalAmt : 0.0;
+
+            if ($ordDate >= $range['startDate'] && $ordDate <= $range['endDate']) {
+                $curOrdersCount++;
+                $curRevenue += $realizedRev;
+            } elseif ($ordDate >= $range['previousStartDate'] && $ordDate <= $range['previousEndDate']) {
+                $prevOrdersCount++;
+                $prevRevenue += $realizedRev;
+            }
+        }
 
         return [
             'ok'            => true,
             'businessName'  => 'Lillia and Rowena Furniture',
+            'currency'      => 'USD ($)',
             'generatedAt'   => (new \DateTimeImmutable('now', new \DateTimeZone('Asia/Manila')))->format(\DateTimeInterface::ATOM),
             'dateRange'     => $range,
+            'summary'       => [
+                'totalRevenue' => array_merge(
+                    ['value' => round($curRevenue, 2), 'previousValue' => round($prevRevenue, 2)],
+                    $this->computePercentChange($curRevenue, $prevRevenue)
+                ),
+                'totalOrders'  => array_merge(
+                    ['value' => $curOrdersCount, 'previousValue' => $prevOrdersCount],
+                    $this->computePercentChange((float) $curOrdersCount, (float) $prevOrdersCount)
+                ),
+            ],
             'sqlAggregates' => $sqlAggregates,
             'voucherCount'  => count($vouchers),
         ];

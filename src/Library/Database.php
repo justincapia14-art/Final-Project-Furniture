@@ -1744,7 +1744,7 @@ class Database
                     'estimatedDelivery' => '2026-11-29',
                     'deliveryAddress' => '880 Lake Shore Drive, Apt 32B, Chicago',
                     'assignedCraftsperson' => 'Clara Lindqvist',
-                    'notes' => 'Fumed Dark Oak +₱160 color tier selected.',
+                    'notes' => 'Fumed Dark Oak +$160 color tier selected.',
                     'appliedVoucherCode' => null,
                     'voucherDiscountAmount' => 0,
                 ],
