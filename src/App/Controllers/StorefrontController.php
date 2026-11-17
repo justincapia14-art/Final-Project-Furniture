@@ -40,7 +40,11 @@ final class StorefrontController
             : [];
         $store['products'] = $products;
         $store['catalog'] = $products;
-        $store['vouchers'] = $this->productModel->getAllVouchersWithResolvedStatus();
+        if (method_exists($this->productModel, 'getAllVouchersWithResolvedStatus')) {
+            $store['vouchers'] = $this->productModel->getAllVouchersWithResolvedStatus();
+        } else {
+            $store['vouchers'] = is_array($store['vouchers'] ?? null) ? $store['vouchers'] : [];
+        }
         $store['customerDirectory'] = StoreService::computeCustomerDirectory(
             is_array($store['orders'] ?? null) ? $store['orders'] : [],
             is_array($store['customers'] ?? null) ? $store['customers'] : [],
@@ -144,8 +148,9 @@ final class StorefrontController
      * @param array<string, mixed> $cat
      * @param int $pieceCount
      */
-    public static function renderCategoryCardHtml(array $cat, int $pieceCount, bool $isSelected = false): string
+    public static function renderCategoryCardHtml(array $cat, ?int $pieceCount = null, bool $isSelected = false): string
     {
+        $pieceCount = $pieceCount ?? (int) ($cat['pieceCount'] ?? $cat['itemCount'] ?? 2);
         $esc = static fn(mixed $v): string => htmlspecialchars((string) ($v ?? ''), ENT_QUOTES, 'UTF-8');
         $usd = static fn(int|float $v): string => '$' . number_format((int) round((float) $v));
         $id = (string) ($cat['id'] ?? 'living');

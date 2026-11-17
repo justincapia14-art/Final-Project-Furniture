@@ -227,6 +227,6 @@ $baseHref = str_contains((string) ($_SERVER['SCRIPT_NAME'] ?? ''), '/src/') ? '.
       </div>
     </main>
 
-    <script src="assets/js/login.js"></script>
+    <script type="module" src="assets/js/app.js"></script>
   </body>
 </html>

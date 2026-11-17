@@ -382,10 +382,16 @@ class Database
      */
     public function readStore(): array
     {
-        if (isset($_SESSION['lr_server_store']) && is_array($_SESSION['lr_server_store'])) {
-            $decoded = $_SESSION['lr_server_store'];
-        } elseif (self::$memoryStore !== null) {
+        $runtimeFile = sys_get_temp_dir() . '/lr_furniture_runtime_store.json';
+        if (self::$memoryStore !== null) {
             $decoded = self::$memoryStore;
+        } elseif (is_file($runtimeFile)) {
+            $rawJson = @file_get_contents($runtimeFile);
+            $parsed = is_string($rawJson) && $rawJson !== '' ? json_decode($rawJson, true) : null;
+            $decoded = is_array($parsed) ? $parsed : self::getDefaultStore();
+            self::$memoryStore = $decoded;
+        } elseif (isset($_SESSION['lr_server_store']) && is_array($_SESSION['lr_server_store'])) {
+            $decoded = $_SESSION['lr_server_store'];
         } else {
             $decoded = self::getDefaultStore();
         }
@@ -539,6 +545,8 @@ class Database
         if (session_status() === PHP_SESSION_ACTIVE) {
             $_SESSION['lr_server_store'] = $data;
         }
+        $runtimeFile = sys_get_temp_dir() . '/lr_furniture_runtime_store.json';
+        @file_put_contents($runtimeFile, json_encode($data, JSON_UNESCAPED_SLASHES));
 
         if ($this->pdo !== null) {
             $this->syncStoreToMySql($data);

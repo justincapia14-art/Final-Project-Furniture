@@ -13,6 +13,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../config/bootstrap.php';
 
 use App\Controllers\AnalyticsController;
+use App\Controllers\DashboardController;
 use App\Controllers\StorefrontController;
 use App\Models\AnalyticsReport;
 use App\Models\Product;
@@ -67,6 +68,7 @@ try {
     $userModel = new User($db);
     $storefrontController = new StorefrontController($db);
     $analyticsController = new AnalyticsController($db);
+    $dashboardController = new DashboardController($db);
 
     if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'state') {
         $store = $storefrontController->getHydratedStoreState();
@@ -77,27 +79,30 @@ try {
         exit;
     }
 
-    if ($action === 'analytics_report') {
+    if ($action === 'analytics_report' || $action === 'get_analytics_report' || $action === 'render_admin_analytics') {
         $filterOptions = is_array($payload['filterOptions'] ?? null)
             ? $payload['filterOptions']
-            : [
-                'preset'    => $_GET['preset'] ?? $payload['preset'] ?? 'this_month',
-                'year'      => $_GET['year'] ?? $payload['year'] ?? null,
-                'month'     => $_GET['month'] ?? $payload['month'] ?? null,
-                'startDate' => $_GET['startDate'] ?? $payload['startDate'] ?? null,
-                'endDate'   => $_GET['endDate'] ?? $payload['endDate'] ?? null,
-            ];
+            : (is_array($payload['filter'] ?? null)
+                ? $payload['filter']
+                : [
+                    'preset'    => $_GET['preset'] ?? $payload['preset'] ?? 'this_month',
+                    'year'      => $_GET['year'] ?? $payload['year'] ?? null,
+                    'month'     => $_GET['month'] ?? $payload['month'] ?? null,
+                    'startDate' => $_GET['startDate'] ?? $payload['startDate'] ?? null,
+                    'endDate'   => $_GET['endDate'] ?? $payload['endDate'] ?? null,
+                ]);
         $nowIso = isset($payload['nowIso']) ? (string) $payload['nowIso'] : null;
         $report = $analyticsController->getReport($filterOptions, $nowIso);
         $report['chartsSvg'] = [
             'dailyRevenue' => AnalyticsController::renderDailyRevenueSvg($report['salesAnalytics']['dailySeries'] ?? []),
             'dailyOrders'  => AnalyticsController::renderDailyOrdersSvg($report['salesAnalytics']['dailySeries'] ?? []),
         ];
-        echo json_encode(['ok' => true, 'report' => $report], JSON_UNESCAPED_SLASHES);
+        $html = $dashboardController->renderAdminAnalyticsHtml($filterOptions);
+        echo json_encode(['ok' => true, 'report' => $report, 'html' => $html], JSON_UNESCAPED_SLASHES);
         exit;
     }
 
-    if ($action === 'login') {
+    if ($action === 'login' || $action === 'login_user') {
         $email = (string) ($payload['email'] ?? $_POST['email'] ?? '');
         $password = (string) ($payload['password'] ?? $_POST['password'] ?? '');
         $role = (string) ($payload['role'] ?? $_POST['role'] ?? 'client');
@@ -107,27 +112,29 @@ try {
         $db->saveSessionUser($authenticatedUser);
 
         echo json_encode([
-            'ok'   => true,
-            'user' => $authenticatedUser,
+            'ok'          => true,
+            'user'        => $authenticatedUser,
+            'sessionUser' => $authenticatedUser,
         ], JSON_UNESCAPED_SLASHES);
         exit;
     }
 
-    if ($action === 'register') {
+    if ($action === 'register' || $action === 'register_customer') {
         $registeredUser = $userModel->registerCustomer([
-            'fullName'        => (string) ($payload['fullName'] ?? $_POST['fullName'] ?? ''),
+            'fullName'        => (string) ($payload['fullName'] ?? $payload['name'] ?? $_POST['fullName'] ?? ''),
             'email'           => (string) ($payload['email'] ?? $_POST['email'] ?? ''),
             'phoneNumber'     => (string) ($payload['phoneNumber'] ?? $_POST['phoneNumber'] ?? ''),
             'address'         => (string) ($payload['address'] ?? $_POST['address'] ?? ''),
             'password'        => (string) ($payload['password'] ?? $_POST['password'] ?? ''),
-            'confirmPassword' => (string) ($payload['confirmPassword'] ?? $_POST['confirmPassword'] ?? ''),
+            'confirmPassword' => (string) ($payload['confirmPassword'] ?? $payload['password'] ?? $_POST['confirmPassword'] ?? ''),
         ]);
         $_SESSION['user'] = $registeredUser;
         $db->saveSessionUser($registeredUser);
 
         echo json_encode([
-            'ok'   => true,
-            'user' => $registeredUser,
+            'ok'          => true,
+            'user'        => $registeredUser,
+            'sessionUser' => $registeredUser,
         ], JSON_UNESCAPED_SLASHES);
         exit;
     }
@@ -252,11 +259,14 @@ try {
     if ($action === 'create_voucher') {
         $voucherInput = isset($payload['voucher']) && is_array($payload['voucher']) ? $payload['voucher'] : $payload;
         $record = $productModel->createVoucher($voucherInput);
+        $vouchersList = method_exists($productModel, 'getAllVouchersWithResolvedStatus')
+            ? $productModel->getAllVouchersWithResolvedStatus()
+            : ($db->readStore()['vouchers'] ?? []);
 
         echo json_encode([
             'ok'       => true,
             'voucher'  => $record,
-            'vouchers' => $productModel->getAllVouchersWithResolvedStatus(),
+            'vouchers' => $vouchersList,
         ], JSON_UNESCAPED_SLASHES);
         exit;
     }
@@ -264,11 +274,14 @@ try {
     if ($action === 'revoke_voucher') {
         $voucherId = (string) ($payload['voucherId'] ?? $payload['id'] ?? $payload['code'] ?? '');
         $revoked = $productModel->revokeVoucher($voucherId);
+        $vouchersList = method_exists($productModel, 'getAllVouchersWithResolvedStatus')
+            ? $productModel->getAllVouchersWithResolvedStatus()
+            : ($db->readStore()['vouchers'] ?? []);
 
         echo json_encode([
             'ok'       => true,
             'voucher'  => $revoked,
-            'vouchers' => $productModel->getAllVouchersWithResolvedStatus(),
+            'vouchers' => $vouchersList,
         ], JSON_UNESCAPED_SLASHES);
         exit;
     }

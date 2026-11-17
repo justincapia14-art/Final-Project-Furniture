@@ -11,8 +11,9 @@ $sessionPayload = [
     'role'  => strcasecmp((string) ($user['role'] ?? ($_GET['role'] ?? 'client')), 'Admin') === 0 || ($_GET['role'] ?? '') === 'admin' ? 'admin' : 'client',
 ];
 $baseHref = str_contains((string) ($_SERVER['SCRIPT_NAME'] ?? ''), '/src/') ? '../' : './';
-$storefrontCtrl = new \App\Controllers\StorefrontController($this->db ?? null);
-$dashboardCtrl = new \App\Controllers\DashboardController($this->db ?? null);
+$dbInstance = (isset($this) && is_object($this) && isset($this->db)) ? $this->db : ($database ?? null);
+$storefrontCtrl = new \App\Controllers\StorefrontController($dbInstance);
+$dashboardCtrl = new \App\Controllers\DashboardController($dbInstance);
 $hydratedState = $storefrontCtrl->getHydratedStoreState();
 $clientEmail = (string) ($sessionPayload['email'] ?? 'rowena.vance@vancearchitects.com');
 $phpClientOrdersHtml = $dashboardCtrl->renderClientOrdersHtml($clientEmail);

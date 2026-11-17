@@ -442,7 +442,8 @@ final class DashboardController
      */
     public function renderAdminAnalyticsHtml(array $query = []): string
     {
-        $report = $this->analyticsReport->generateReport($query);
+        $store = $this->db->readStore();
+        $report = AnalyticsReport::generateReport($store, $query);
         $period = (array) ($report['period'] ?? []);
         $summary = (array) ($report['summary'] ?? []);
         $sales = (array) ($report['salesAnalytics'] ?? []);
@@ -466,25 +467,69 @@ final class DashboardController
         $custVal = (int) ($summary['newCustomers']['value'] ?? $summary['newCustomersRegistered']['value'] ?? 0);
         $vchVal = (int) ($vchAnalytics['redeemedInPeriodCount'] ?? 0);
 
+        $preset = (string) ($period['preset'] ?? $query['preset'] ?? 'this_month');
+        $selYear = (int) ($period['year'] ?? $query['year'] ?? 2026);
+        $selMonth = (int) ($period['month'] ?? $query['month'] ?? 11);
+        $startDate = self::esc($period['startDate'] ?? $query['startDate'] ?? '2026-11-01');
+        $endDate = self::esc($period['endDate'] ?? $query['endDate'] ?? '2026-11-30');
+        $monthNames = [1 => 'January', 2 => 'February', 3 => 'March', 4 => 'April', 5 => 'May', 6 => 'June', 7 => 'July', 8 => 'August', 9 => 'September', 10 => 'October', 11 => 'November', 12 => 'December'];
+
         ob_start();
         ?>
-        <div class="space-y-6" data-php-rendered="admin-analytics">
-          <div class="admin-card p-6 bg-[#0B0F17] text-white border border-slate-800">
+        <div class="space-y-6" data-php-rendered="admin-analytics" data-period-label="<?= $periodLabel ?>">
+          <div class="admin-card p-6 border border-slate-200 space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <p class="font-mono-tech text-[11px] uppercase tracking-widest text-[#38BDF8]">PHP Server-Computed Business Report</p>
-                <h3 class="font-serif-display text-xl font-bold mt-1"><?= $periodLabel ?> — Executive Summary</h3>
-                <p class="text-xs text-slate-300 mt-0.5">Compared against <?= $comparisonLabel ?> · Realized revenue from Completed Orders only</p>
+                <p class="font-mono-tech text-[11px] uppercase tracking-widest text-[#0095FF] font-bold">PHP Server-Computed Business Report</p>
+                <h3 class="font-serif-display text-xl font-bold text-slate-900 mt-1"><?= $periodLabel ?> — Executive Summary</h3>
+                <p class="text-xs text-slate-600 mt-0.5">Compared against <?= $comparisonLabel ?> · Realized revenue from Completed Orders only</p>
               </div>
               <div class="flex flex-wrap items-center gap-2">
-                <a href="src/api.php?action=export_analytics_pdf&amp;preset=<?= urlencode((string) ($period['preset'] ?? 'this_month')) ?>&amp;year=<?= (int) ($period['year'] ?? 2026) ?>&amp;month=<?= (int) ($period['month'] ?? 11) ?>"
-                   class="px-3.5 py-2 rounded-xl bg-[#0095FF] hover:bg-[#0077CC] text-white text-xs font-semibold transition-colors">
+                <a id="analytics-export-pdf-btn"
+                   href="src/api.php?action=export_analytics_pdf&amp;preset=<?= urlencode($preset) ?>&amp;year=<?= $selYear ?>&amp;month=<?= $selMonth ?>&amp;startDate=<?= urlencode($startDate) ?>&amp;endDate=<?= urlencode($endDate) ?>"
+                   class="px-3.5 py-2 rounded-xl bg-[#0095FF] hover:bg-[#0077CC] text-white text-xs font-semibold transition-colors cursor-pointer">
                   Download PDF Report
                 </a>
-                <a href="src/api.php?action=export_analytics_csv&amp;preset=<?= urlencode((string) ($period['preset'] ?? 'this_month')) ?>&amp;year=<?= (int) ($period['year'] ?? 2026) ?>&amp;month=<?= (int) ($period['month'] ?? 11) ?>"
-                   class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 text-xs font-semibold transition-colors">
+                <a id="analytics-export-csv-btn"
+                   href="src/api.php?action=export_analytics_csv&amp;preset=<?= urlencode($preset) ?>&amp;year=<?= $selYear ?>&amp;month=<?= $selMonth ?>&amp;startDate=<?= urlencode($startDate) ?>&amp;endDate=<?= urlencode($endDate) ?>"
+                   class="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold transition-colors cursor-pointer">
                   Export CSV
                 </a>
+                <button type="button" id="analytics-print-report-btn"
+                        class="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-semibold transition-colors cursor-pointer">
+                  Print
+                </button>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <?php foreach (['this_month' => 'This Month', 'last_month' => 'Last Month', 'select_month' => 'Select Month', 'this_year' => 'Full Year', 'custom_range' => 'Custom Range'] as $pKey => $pTitle): ?>
+                  <button type="button"
+                          data-analytics-preset="<?= $pKey ?>"
+                          class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer <?= $preset === $pKey ? 'bg-[#0095FF] text-white shadow-2xs' : 'bg-slate-100 text-slate-700 hover:bg-slate-200' ?>">
+                    <?= $pTitle ?>
+                  </button>
+                <?php endforeach; ?>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <select id="analytics-select-month" aria-label="Report Month" class="px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-900 font-medium">
+                  <?php foreach ($monthNames as $mNum => $mName): ?>
+                    <option value="<?= $mNum ?>" <?= $selMonth === $mNum ? 'selected' : '' ?>><?= $mName ?></option>
+                  <?php endforeach; ?>
+                </select>
+                <select id="analytics-select-year" aria-label="Report Year" class="px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-900 font-medium">
+                  <?php foreach ([2024, 2025, 2026, 2027] as $yNum): ?>
+                    <option value="<?= $yNum ?>" <?= $selYear === $yNum ? 'selected' : '' ?>><?= $yNum ?></option>
+                  <?php endforeach; ?>
+                </select>
+                <?php if ($preset === 'custom_range'): ?>
+                  <input type="date" id="analytics-custom-start" value="<?= $startDate ?>" class="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-900" />
+                  <span class="text-slate-500">to</span>
+                  <input type="date" id="analytics-custom-end" value="<?= $endDate ?>" class="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-900" />
+                  <button type="button" id="analytics-apply-custom-range" class="px-3 py-1.5 rounded-lg bg-[#0095FF] text-white font-semibold cursor-pointer">Apply</button>
+                <?php endif; ?>
               </div>
             </div>
           </div>
