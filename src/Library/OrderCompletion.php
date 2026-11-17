@@ -7,17 +7,31 @@ namespace Library;
 /** Shared completion and reporting-date policy for persistence and PHP reports. */
 final class OrderCompletion
 {
-    /** Keep the same completion rules as the browser/preview store. */
-    public static function isCompleted(array $order): bool
+    /** Determine whether an order has been cancelled. */
+    public static function isCancelled(array $order): bool
     {
         $status = (string) ($order['status'] ?? '');
         $sqlStatus = (string) ($order['sqlStatus'] ?? '');
-        if (stripos($status, 'Cancelled') !== false || $sqlStatus === 'Cancelled') {
+        return stripos($status, 'Cancelled') !== false || strcasecmp($sqlStatus, 'Cancelled') === 0;
+    }
+
+    /** Keep the same completion rules as the browser/preview store. */
+    public static function isCompleted(array $order): bool
+    {
+        if (self::isCancelled($order)) {
             return false;
         }
+        $status = (string) ($order['status'] ?? '');
+        $sqlStatus = (string) ($order['sqlStatus'] ?? '');
         return ($order['isCompleted'] ?? false) === true
             || preg_match('/Completed|Delivered/i', $status) === 1
             || ($sqlStatus === 'Delivered' && preg_match('/Dispatched|Transit/i', $status) !== 1);
+    }
+
+    /** Alias used by AnalyticsReport and StoreService. */
+    public static function isOrderCompleted(array $order): bool
+    {
+        return self::isCompleted($order);
     }
 
     /** Existing completed orders without a timestamp retain their original date. */
@@ -34,5 +48,4 @@ final class OrderCompletion
             return null;
         }
     }
-
 }

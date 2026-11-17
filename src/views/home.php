@@ -10,13 +10,26 @@ $sessionPayload = [
     'name'  => $user['fullName'] ?? ($user['name'] ?? (($_GET['role'] ?? 'client') === 'admin' ? 'Lillia Mercier (Business Owner)' : 'Rowena Vance')),
     'role'  => strcasecmp((string) ($user['role'] ?? ($_GET['role'] ?? 'client')), 'Admin') === 0 || ($_GET['role'] ?? '') === 'admin' ? 'admin' : 'client',
 ];
+$baseHref = str_contains((string) ($_SERVER['SCRIPT_NAME'] ?? ''), '/src/') ? '../' : './';
+$storefrontCtrl = new \App\Controllers\StorefrontController($this->db ?? null);
+$dashboardCtrl = new \App\Controllers\DashboardController($this->db ?? null);
+$hydratedState = $storefrontCtrl->getHydratedStoreState();
+$clientEmail = (string) ($sessionPayload['email'] ?? 'rowena.vance@vancearchitects.com');
+$phpClientOrdersHtml = $dashboardCtrl->renderClientOrdersHtml($clientEmail);
+$phpClientTransactionsHtml = $dashboardCtrl->renderClientTransactionsRowsHtml($clientEmail);
+$phpClientVouchersHtml = $dashboardCtrl->renderClientVouchersHtml($clientEmail);
+$phpAdminCatalogHtml = $dashboardCtrl->renderAdminCatalogTableHtml();
+$phpAdminInventoryHtml = $dashboardCtrl->renderAdminInventoryTableHtml();
+$phpAdminOrdersHtml = $dashboardCtrl->renderAdminOrdersTableHtml('active');
+$phpAdminCustomersHtml = $dashboardCtrl->renderAdminCustomersTableHtml();
+$phpAnalyticsHtml = $dashboardCtrl->renderAdminAnalyticsHtml($_GET);
 ?>
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <base href="../" />
+    <base href="<?= htmlspecialchars($baseHref, ENT_QUOTES, 'UTF-8') ?>" />
     <title>Lillia and Rowena Furniture — Account Dashboard</title>
     <meta name="description" content="Lillia and Rowena Furniture — Customer Account Dashboard and Admin Management Console." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -25,6 +38,7 @@ $sessionPayload = [
     <link rel="stylesheet" href="assets/css/style.css" />
     <script>
       window.__SERVER_SESSION_USER__ = <?= json_encode($sessionPayload, JSON_UNESCAPED_SLASHES) ?>;
+      window.__INITIAL_STORE_STATE__ = <?= json_encode($hydratedState, JSON_UNESCAPED_SLASHES) ?>;
     </script>
   </head>
   <body class="bg-[#F4F9FF] text-[#0F172A] antialiased selection:bg-[#0095FF] selection:text-white min-h-screen flex flex-col">
@@ -427,7 +441,7 @@ $sessionPayload = [
                 <!-- Interactive Custom Furniture Commission Builder (Synced with Workshop Materials & Admin Orders) -->
                 <div id="client-custom-order-card" class="hidden bg-white rounded-3xl border border-[#BCE3FF] p-6 sm:p-8 shadow-2xs space-y-5"></div>
 
-                <div id="client-orders-friendly-list" class="space-y-5"></div>
+                <div id="client-orders-friendly-list" class="space-y-5"><?= $phpClientOrdersHtml ?></div>
               </div>
 
               <!-- TAB 3: ADDRESS/CONTACT -->
@@ -598,7 +612,7 @@ $sessionPayload = [
                           <th class="text-right">Amount</th>
                         </tr>
                       </thead>
-                      <tbody id="client-transactions-tbody"></tbody>
+                      <tbody id="client-transactions-tbody"><?= $phpClientTransactionsHtml ?></tbody>
                     </table>
                   </div>
                 </div>
@@ -725,7 +739,7 @@ $sessionPayload = [
                   </a>
                 </div>
 
-                <div id="client-vouchers-friendly-list" class="grid grid-cols-1 md:grid-cols-2 gap-5"></div>
+                <div id="client-vouchers-friendly-list" class="grid grid-cols-1 md:grid-cols-2 gap-5"><?= $phpClientVouchersHtml ?></div>
               </div>
             </div>
           </div>
@@ -1152,17 +1166,17 @@ $sessionPayload = [
                 </div>
               </form>
 
-              <div id="admin-catalog-list" class="space-y-4"></div>
+              <div id="admin-catalog-list" class="space-y-4"><?= $phpAdminCatalogHtml ?></div>
             </div>
 
             <!-- PAGE 3: INVENTORY & STOCK MANAGEMENT -->
-            <div id="admin-tab-inventory" class="admin-tab-panel hidden space-y-5"></div>
+            <div id="admin-tab-inventory" class="admin-tab-panel hidden space-y-5"><?= $phpAdminInventoryHtml ?></div>
 
             <!-- PAGE 4: ORDERS MANAGEMENT -->
-            <div id="admin-tab-orders" class="admin-tab-panel hidden space-y-5"></div>
+            <div id="admin-tab-orders" class="admin-tab-panel hidden space-y-5"><?= $phpAdminOrdersHtml ?></div>
 
             <!-- PAGE 5: CUSTOMERS MANAGEMENT -->
-            <div id="admin-tab-customers" class="admin-tab-panel hidden space-y-5"></div>
+            <div id="admin-tab-customers" class="admin-tab-panel hidden space-y-5"><?= $phpAdminCustomersHtml ?></div>
 
             <!-- PAGE 6: VOUCHERS MANAGEMENT -->
             <div id="admin-tab-vouchers" class="admin-tab-panel hidden space-y-5">
@@ -1337,7 +1351,7 @@ $sessionPayload = [
             </div>
 
             <!-- PAGE 7: ANALYTICS & BUSINESS REPORTS -->
-            <div id="admin-tab-analytics" class="admin-tab-panel hidden space-y-6"></div>
+            <div id="admin-tab-analytics" class="admin-tab-panel hidden space-y-6"><?= $phpAnalyticsHtml ?></div>
           </div>
         </div>
 

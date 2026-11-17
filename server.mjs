@@ -1,4 +1,8 @@
-import { computeMonthlyAnalyticsReport } from './assets/js/analytics.js';
+import {
+  computeMonthlyAnalyticsReport,
+  buildAnalyticsCsvContent,
+  buildAnalyticsPdfBytes,
+} from './assets/js/analytics.js';
 /**
  * Server-Side Preview & Datastore HTTP Server (Port 3000)
  * Mirrors `src/api.php` (PHP PDO server endpoint) so all storefront, login, cart,
@@ -113,12 +117,59 @@ function sendJson(res, statusCode, payload) {
 function handleApiRequest(req, res, parsedUrl) {
   try {
     if (req.method === 'GET') {
+      const action = String(parsedUrl.searchParams.get('action') || 'state');
       const store = readStoreFile();
+
+      if (
+        action === 'analytics_report' ||
+        action === 'get_analytics_report' ||
+        action === 'export_analytics_csv' ||
+        action === 'export_analytics_pdf'
+      ) {
+        const filterOptions = {
+          preset: parsedUrl.searchParams.get('preset') || 'this_month',
+          year: parsedUrl.searchParams.get('year') || undefined,
+          month: parsedUrl.searchParams.get('month') || undefined,
+          startDate: parsedUrl.searchParams.get('startDate') || undefined,
+          endDate: parsedUrl.searchParams.get('endDate') || undefined,
+        };
+        const report = computeMonthlyAnalyticsReport(store, filterOptions, Date.now());
+        const slug = String(report.period?.label || 'monthly-report')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-');
+
+        if (action === 'export_analytics_csv') {
+          const csv = buildAnalyticsCsvContent(report);
+          res.writeHead(200, {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': `attachment; filename="lillia-rowena-analytics-${slug}.csv"`,
+          });
+          res.end(csv);
+          return;
+        }
+        if (action === 'export_analytics_pdf') {
+          const pdfBytes = buildAnalyticsPdfBytes(report);
+          res.writeHead(200, {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `attachment; filename="lillia-rowena-analytics-${slug}.pdf"`,
+          });
+          res.end(Buffer.from(pdfBytes));
+          return;
+        }
+        return sendJson(res, 200, { ok: true, report });
+      }
+
       if (!Object.prototype.hasOwnProperty.call(store, 'sessionUser')) {
         store.sessionUser = null;
       }
       if (!Array.isArray(store.cartItems)) {
         store.cartItems = [];
+      }
+      if (Array.isArray(store.products) && !Array.isArray(store.catalog)) {
+        store.catalog = store.products;
+      }
+      if (Array.isArray(store.materials) && !Array.isArray(store.rawMaterials)) {
+        store.rawMaterials = store.materials;
       }
       store._dbMeta = {
         driver: 'pdo_mysql',
@@ -141,6 +192,7 @@ function handleApiRequest(req, res, parsedUrl) {
           const store = readStoreFile();
 
           switch (action) {
+            case 'analytics_report':
             case 'get_analytics_report': {
               const activeUser = payload.sessionUser || store.sessionUser || null;
               const activeRole = activeUser && activeUser.role ? String(activeUser.role).toLowerCase() : '';
@@ -151,7 +203,11 @@ function handleApiRequest(req, res, parsedUrl) {
                 });
               }
               const filterInput =
-                payload.filter && typeof payload.filter === 'object' ? payload.filter : payload;
+                payload.filter && typeof payload.filter === 'object'
+                  ? payload.filter
+                  : payload.filterOptions && typeof payload.filterOptions === 'object'
+                  ? payload.filterOptions
+                  : payload;
               const report = computeMonthlyAnalyticsReport(store, filterInput, Date.now());
               return sendJson(res, 200, { ok: true, report });
             }
@@ -341,6 +397,7 @@ function handleApiRequest(req, res, parsedUrl) {
               break;
             }
 
+            case 'login':
             case 'login_user': {
               const email = String(payload.email || '').trim().toLowerCase();
               const password = String(payload.password || '');
@@ -367,7 +424,7 @@ function handleApiRequest(req, res, parsedUrl) {
                 };
                 store.sessionUser = sessionUser;
                 writeStoreFile(store);
-                return sendJson(res, 200, { ok: true, sessionUser });
+                return sendJson(res, 200, { ok: true, user: sessionUser, sessionUser });
               }
 
               const customers = Array.isArray(store.customers) ? store.customers : [];
@@ -410,9 +467,10 @@ function handleApiRequest(req, res, parsedUrl) {
                 avatar: avatarUrl,
               };
               writeStoreFile(store);
-              return sendJson(res, 200, { ok: true, customer: matchedCustomer, sessionUser });
+              return sendJson(res, 200, { ok: true, user: sessionUser, customer: matchedCustomer, sessionUser });
             }
 
+            case 'register':
             case 'register_customer': {
               const customers = Array.isArray(store.customers) ? [...store.customers] : [];
               const email = String(payload.email || '').trim().toLowerCase();
@@ -465,7 +523,7 @@ function handleApiRequest(req, res, parsedUrl) {
                 avatar: '',
               };
               writeStoreFile(store);
-              return sendJson(res, 200, { ok: true, customer: customerRecord, sessionUser });
+              return sendJson(res, 200, { ok: true, user: sessionUser, customer: customerRecord, sessionUser });
             }
 
             case 'upload_product_image': {
@@ -514,12 +572,55 @@ function handleApiRequest(req, res, parsedUrl) {
   }
 }
 
+const PHP_PAGE_MAP = {
+  '/index.php': 'index.html',
+  '/catalog.php': 'catalog.html',
+  '/login.php': 'login.html',
+  '/src/index.php': 'login.html',
+  '/dashboard.php': 'dashboard.html',
+  '/src/home.php': 'dashboard.html',
+};
+
 const server = http.createServer((req, res) => {
   const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   let pathname = decodeURIComponent(parsedUrl.pathname);
 
   if (pathname === '/api.php' || pathname === '/src/api.php' || pathname === '/api/store') {
     return handleApiRequest(req, res, parsedUrl);
+  }
+
+  if (pathname === '/logout.php' || pathname === '/src/logout.php') {
+    const store = readStoreFile();
+    store.sessionUser = null;
+    store.cartItems = [];
+    writeStoreFile(store);
+    res.writeHead(302, { Location: '/index.html' });
+    res.end();
+    return;
+  }
+
+  if (PHP_PAGE_MAP[pathname]) {
+    const htmlFile = path.join(__dirname, PHP_PAGE_MAP[pathname]);
+    const store = readStoreFile();
+    const roleParam = parsedUrl.searchParams.get('role');
+    const sessionUser =
+      store.sessionUser ||
+      (roleParam === 'admin'
+        ? { email: 'admin@lilliarowena.com', name: 'Lillia Mercier (Business Owner)', role: 'admin' }
+        : roleParam === 'client'
+        ? { email: 'rowena.vance@vancearchitects.com', name: 'Rowena Vance', role: 'client' }
+        : null);
+    let html = fs.readFileSync(htmlFile, 'utf8');
+    const injectScript = `<script>window.__SERVER_SESSION_USER__ = ${JSON.stringify(
+      sessionUser
+    )}; window.__INITIAL_STORE_STATE__ = ${JSON.stringify(store)};</script></head>`;
+    html = html.replace('</head>', injectScript);
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(html);
+    return;
   }
 
   if (pathname === '/') {

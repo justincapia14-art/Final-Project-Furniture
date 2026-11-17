@@ -13,13 +13,14 @@ $defaultEmail = !empty($email)
     ? $email
     : ($activeRole === 'Admin' ? 'admin@lilliarowena.com' : 'rowena.vance@vancearchitects.com');
 $defaultPass = $activeRole === 'Admin' ? 'MasterJoinery#01' : 'ClientPass2025!';
+$baseHref = str_contains((string) ($_SERVER['SCRIPT_NAME'] ?? ''), '/src/') ? '../' : './';
 ?>
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <base href="../" />
+    <base href="<?= htmlspecialchars($baseHref, ENT_QUOTES, 'UTF-8') ?>" />
     <title>Lillia and Rowena Furniture — Login</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
