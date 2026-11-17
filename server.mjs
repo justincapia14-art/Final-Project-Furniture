@@ -1,3 +1,4 @@
+import { computeMonthlyAnalyticsReport } from './assets/js/analytics.js';
 /**
  * Server-Side Preview & Datastore HTTP Server (Port 3000)
  * Mirrors `src/api.php` (PHP PDO server endpoint) so all storefront, login, cart,
@@ -14,7 +15,6 @@ import {
   revokeVoucherInList,
   validateVoucherForOrder,
   calculateOrderPricing,
-  computeMonthlyAnalyticsReport,
 } from './assets/js/store.js';
 
 const __filename = fileURLToPath(import.meta.url);

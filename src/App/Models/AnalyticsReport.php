@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Library\Database;
+use Library\OrderCompletion;
 
 /**
  * Monthly Analytics & Business Reports Domain Model (PSR-4: App\Models\AnalyticsReport).
@@ -154,17 +155,21 @@ class AnalyticsReport
         }
 
         try {
+            // Aggregate each order once so multiple line items cannot inflate counts/AOV.
             $orderSummarySql = "
-                SELECT
-                    COUNT(DISTINCT co.OrderID) AS totalOrders,
-                    SUM(CASE WHEN co.Status = 'Delivered' THEN 1 ELSE 0 END) AS completedOrders,
-                    SUM(CASE WHEN co.Status = 'Pending' THEN 1 ELSE 0 END) AS pendingOrders,
-                    SUM(CASE WHEN co.Status = 'Cancelled' THEN 1 ELSE 0 END) AS cancelledOrders,
-                    COALESCE(SUM(CASE WHEN co.Status <> 'Cancelled' THEN oi.Quantity * oi.UnitPrice ELSE 0 END), 0) AS grossOrderRevenue,
-                    COALESCE(AVG(CASE WHEN co.Status <> 'Cancelled' THEN oi.Quantity * oi.UnitPrice ELSE NULL END), 0) AS avgOrderValue
-                FROM Customer_Order co
-                LEFT JOIN Order_Item oi ON oi.OrderID = co.OrderID
-                WHERE co.OrderDate BETWEEN :startDate AND :endDate
+                SELECT COUNT(*) AS totalOrders,
+                       COUNT(*) AS completedOrders,
+                       0 AS pendingOrders, 0 AS cancelledOrders,
+                       COALESCE(SUM(s.orderTotal), 0) AS grossOrderRevenue,
+                       COALESCE(AVG(s.orderTotal), 0) AS avgOrderValue
+                FROM (
+                    SELECT co.OrderID, COALESCE(SUM(oi.Quantity * oi.UnitPrice), 0) AS orderTotal
+                    FROM Customer_Order co
+                    LEFT JOIN Order_Item oi ON oi.OrderID = co.OrderID
+                    WHERE co.Status = 'Delivered'
+                      AND COALESCE(co.CompletedAt, co.OrderDate) BETWEEN :startDate AND :endDate
+                    GROUP BY co.OrderID
+                ) s
             ";
             $summaryRow = $this->db->fetch($orderSummarySql, [
                 ':startDate' => $startDate,
@@ -174,7 +179,8 @@ class AnalyticsReport
             $statusDistSql = "
                 SELECT co.Status AS status, COUNT(*) AS orderCount
                 FROM Customer_Order co
-                WHERE co.OrderDate BETWEEN :startDate AND :endDate
+                WHERE COALESCE(co.CompletedAt, co.OrderDate) BETWEEN :startDate AND :endDate
+                  AND co.Status = 'Delivered'
                 GROUP BY co.Status
             ";
             $statusRows = $this->db->fetchAll($statusDistSql, [
@@ -190,8 +196,8 @@ class AnalyticsReport
                 INNER JOIN Customer_Order co ON co.OrderID = oi.OrderID
                 INNER JOIN Product p ON p.ProductID = oi.ProductID
                 INNER JOIN Category c ON c.CategoryID = p.CategoryID
-                WHERE co.OrderDate BETWEEN :startDate AND :endDate
-                  AND co.Status <> 'Cancelled'
+                WHERE COALESCE(co.CompletedAt, co.OrderDate) BETWEEN :startDate AND :endDate
+                  AND co.Status = 'Delivered'
                 GROUP BY c.CategoryID, c.CategoryName
                 ORDER BY revenue DESC
             ";
@@ -204,14 +210,14 @@ class AnalyticsReport
                 SELECT p.ProductID AS productId,
                        p.ProductName AS productName,
                        c.CategoryName AS categoryName,
-                       COALESCE(SUM(oi.Quantity), 0) AS quantitySold,
-                       COALESCE(SUM(oi.Quantity * oi.UnitPrice), 0) AS totalRevenue
+                       COALESCE(SUM(CASE WHEN co.OrderID IS NOT NULL THEN oi.Quantity ELSE 0 END), 0) AS quantitySold,
+                       COALESCE(SUM(CASE WHEN co.OrderID IS NOT NULL THEN oi.Quantity * oi.UnitPrice ELSE 0 END), 0) AS totalRevenue
                 FROM Product p
                 INNER JOIN Category c ON c.CategoryID = p.CategoryID
                 LEFT JOIN Order_Item oi ON oi.ProductID = p.ProductID
                 LEFT JOIN Customer_Order co ON co.OrderID = oi.OrderID
-                    AND co.OrderDate BETWEEN :startDate AND :endDate
-                    AND co.Status <> 'Cancelled'
+                    AND COALESCE(co.CompletedAt, co.OrderDate) BETWEEN :startDate AND :endDate
+                    AND co.Status = 'Delivered'
                 GROUP BY p.ProductID, p.ProductName, c.CategoryName
                 ORDER BY totalRevenue DESC, quantitySold DESC
             ";
@@ -271,30 +277,39 @@ class AnalyticsReport
         $curOrdersCount = 0;
         $prevOrdersCount = 0;
 
+        $seenOrders = [];
         foreach ($orders as $ord) {
-            if (!is_array($ord)) {
+            if (!is_array($ord) || !OrderCompletion::isCompleted($ord)) {
                 continue;
             }
-            $ordDate = substr(trim((string) ($ord['orderDate'] ?? '')), 0, 10);
-            $rawStatus = strtolower((string) ($ord['sqlStatus'] ?? $ord['status'] ?? ''));
-            $isCancelled = str_contains($rawStatus, 'cancel');
-            $payStatus = strtolower((string) ($ord['paymentStatus'] ?? ''));
-            $totalAmt = (float) ($ord['totalAmount'] ?? 0);
-            $depPaid = (float) ($ord['depositPaid'] ?? 0);
-            $isRealized = !$isCancelled && ($depPaid > 0 || str_contains($payStatus, 'paid') || str_contains($rawStatus, 'deliver') || str_contains($rawStatus, 'complete'));
-            $realizedRev = $isRealized ? $totalAmt : 0.0;
+            $key = strtoupper(trim((string) ($ord['orderId'] ?? $ord['orderNumber'] ?? $ord['id'] ?? '')));
+            if ($key !== '' && isset($seenOrders[$key])) {
+                continue;
+            }
+            if ($key !== '') {
+                $seenOrders[$key] = true;
+            }
+            $ordDate = OrderCompletion::reportDate($ord);
+            if ($ordDate === null) {
+                continue;
+            }
+            $totalAmt = isset($ord['totalAmount']) && is_numeric($ord['totalAmount']) && (float) $ord['totalAmount'] >= 0
+                ? (float) $ord['totalAmount']
+                : max(0.0, max(1, (int) ($ord['quantity'] ?? 1)) * max(0.0, (float) ($ord['unitPrice'] ?? 0))
+                    + max(0.0, (float) ($ord['extraCost'] ?? 0)) - max(0.0, (float) ($ord['voucherDiscountAmount'] ?? 0)));
 
             if ($ordDate >= $range['startDate'] && $ordDate <= $range['endDate']) {
                 $curOrdersCount++;
-                $curRevenue += $realizedRev;
+                $curRevenue += round($totalAmt);
             } elseif ($ordDate >= $range['previousStartDate'] && $ordDate <= $range['previousEndDate']) {
                 $prevOrdersCount++;
-                $prevRevenue += $realizedRev;
+                $prevRevenue += round($totalAmt);
             }
         }
 
         return [
             'ok'            => true,
+            'recognitionBasis' => 'completed_orders',
             'businessName'  => 'Lillia and Rowena Furniture',
             'currency'      => 'USD ($)',
             'generatedAt'   => (new \DateTimeImmutable('now', new \DateTimeZone('Asia/Manila')))->format(\DateTimeInterface::ATOM),

@@ -100,6 +100,7 @@ CREATE TABLE `Customer_Order` (
     `OrderID`     VARCHAR(50) NOT NULL PRIMARY KEY,
     `CustomerID`  VARCHAR(50) NOT NULL,
     `OrderDate`   DATE NOT NULL,
+    `CompletedAt` DATE DEFAULT NULL,
     `Status`      VARCHAR(20) NOT NULL DEFAULT 'Pending'
                   CHECK (`Status` IN ('Pending','InProduction','Ready','Delivered','Cancelled')),
     FOREIGN KEY (`CustomerID`) REFERENCES `Customer`(`CustomerID`)
