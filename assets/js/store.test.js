@@ -1,3 +1,4 @@
+import { computeMonthlyAnalyticsReport, resolveAnalyticsDateRange, buildAnalyticsCsvContent, buildAnalyticsPdfBytes, computePercentageChange } from './analytics.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,8 +9,6 @@ import {
   applyMaterialStockMovement,
   applyStockMovement,
   buildAdminMessengerUrl,
-  buildAnalyticsCsvContent,
-  buildAnalyticsPdfBytes,
   buildMaterialRecord,
   buildProductRecord,
   buildRequestDesignMessengerUrl,
@@ -18,8 +17,6 @@ import {
   computeCustomerDirectory,
   computeInventoryMetrics,
   computeMaterialInventoryMetrics,
-  computeMonthlyAnalyticsReport,
-  computePercentageChange,
   computeVariantPricing,
   computeVoucherStatusInfo,
   createCustomOrderRequest,
@@ -48,7 +45,6 @@ import {
   removeMaterialFromInventory,
   removeProductFromCatalog,
   requestOrderCancellation,
-  resolveAnalyticsDateRange,
   resolveAuthNavigationState,
   resolveCustomerAvatarState,
   resolveOrderCancellationRequest,
@@ -850,10 +846,10 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
     assert.equal(novReport.period.label, 'November 2026');
     assert.equal(novReport.previousPeriod.label, 'October 2026');
     assert.ok(novReport.summary.totalRevenue.value > 0);
-    assert.equal(novReport.summary.totalOrders.value, 4); // ord-105, ord-106, ord-107, ord-108
+    assert.equal(novReport.summary.totalOrders.value, 2); // completed ord-106 and ord-107 only
     assert.equal(novReport.summary.completedOrders.value, 2); // ord-106, ord-107
-    assert.equal(novReport.summary.pendingOrders.value, 1); // ord-105
-    assert.ok(novReport.summary.totalProductsSold.value >= 5);
+    assert.equal(novReport.summary.pendingOrders.value, 0); // unfinished orders are excluded
+    assert.equal(novReport.summary.totalProductsSold.value, 4);
     assert.ok(novReport.summary.averageOrderValue.value > 0);
 
     // 4. Historical records are preserved when viewing October 2026 (Last Month)
@@ -869,8 +865,8 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
       nowMs,
     });
     assert.equal(octReport.period.label, 'October 2026');
-    assert.equal(octReport.summary.totalOrders.value, 3); // ord-101, ord-102, ord-104
-    assert.ok(octReport.summary.totalRevenue.value > 0);
+    assert.equal(octReport.summary.totalOrders.value, 0); // October orders are still unfinished
+    assert.equal(octReport.summary.totalRevenue.value, 0);
 
     // 5. Cancelled or unpaid orders are excluded from realized revenue, and historical order prices are preserved even if catalog price changes
     const modifiedCatalog = INITIAL_FURNITURE_ITEMS.map((p) => ({ ...p, price: 999999, effectivePrice: 999999 }));
@@ -905,7 +901,7 @@ describe('Pure JavaScript & Server Store Logic Tests', () => {
       nowMs,
     });
     assert.equal(checkReport.summary.totalRevenue.value, novReport.summary.totalRevenue.value);
-    assert.equal(checkReport.summary.cancelledOrders.value, 1);
+    assert.equal(checkReport.summary.cancelledOrders.value, 0);
 
     // 6. Best-Selling Products & Low-Selling Products
     assert.equal(novReport.bestSellingProducts.topFive.length, 5);

@@ -127,9 +127,11 @@ class Database
                 `OrderID` VARCHAR(50) NOT NULL PRIMARY KEY,
                 `CustomerID` VARCHAR(50) NOT NULL,
                 `OrderDate` DATE NOT NULL,
+                `CompletedAt` DATE DEFAULT NULL,
                 `Status` VARCHAR(20) NOT NULL DEFAULT 'Pending',
                 FOREIGN KEY (`CustomerID`) REFERENCES `Customer`(`CustomerID`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+            "ALTER TABLE `Customer_Order` ADD COLUMN `CompletedAt` DATE DEFAULT NULL AFTER `OrderDate`",
             "CREATE TABLE IF NOT EXISTS `Order_Item` (
                 `OrderItemID` VARCHAR(50) NOT NULL PRIMARY KEY,
                 `OrderID` VARCHAR(50) NOT NULL,
@@ -720,110 +722,118 @@ class Database
 
             // 5. Sync Orders (`Customer_Order`, `Order_Item`, `Order_Item_Material`, `Customization`, `Payment`, `Production_Task`)
             if (isset($data['orders']) && is_array($data['orders'])) {
-                $existingOrderCount = (int) (($this->fetch('SELECT COUNT(*) AS cnt FROM Customer_Order'))['cnt'] ?? 0);
-                if ($existingOrderCount < count($data['orders'])) {
-                    foreach (array_reverse($data['orders']) as $ord) {
-                        $ordNumStr = strtoupper(trim((string) ($ord['orderId'] ?? $ord['orderNumber'] ?? '')));
-                        $orderId = $ordNumStr !== '' ? $ordNumStr : ('ORD-2026-' . (1000 + (abs((int) crc32(uniqid())) % 8900)));
-                        $existsOrd = $this->fetch('SELECT OrderID FROM Customer_Order WHERE OrderID = :id LIMIT 1', [':id' => $orderId]);
-                        $sqlStatus = in_array(($ord['sqlStatus'] ?? 'Pending'), ['Pending', 'InProduction', 'Ready', 'Delivered', 'Cancelled'], true)
-                            ? (string) $ord['sqlStatus']
-                            : 'Pending';
-                        $orderDate = !empty($ord['orderDate']) ? (string) $ord['orderDate'] : date('Y-m-d');
+                // Status changes must sync even when no new order was added.
+                foreach (array_reverse($data['orders']) as $ord) {
+                    $ordNumStr = strtoupper(trim((string) ($ord['orderId'] ?? $ord['orderNumber'] ?? '')));
+                    $orderId = $ordNumStr !== '' ? $ordNumStr : ('ORD-2026-' . (1000 + (abs((int) crc32(uniqid())) % 8900)));
+                    $existsOrd = $this->fetch('SELECT OrderID FROM Customer_Order WHERE OrderID = :id LIMIT 1', [':id' => $orderId]);
+                    $sqlStatus = in_array(($ord['sqlStatus'] ?? 'Pending'), ['Pending', 'InProduction', 'Ready', 'Delivered', 'Cancelled'], true)
+                        ? (string) $ord['sqlStatus']
+                        : 'Pending';
+                    $orderDate = !empty($ord['orderDate']) ? (string) $ord['orderDate'] : date('Y-m-d');
+                    if (stripos((string) ($ord['status'] ?? ''), 'Cancelled') !== false || $sqlStatus === 'Cancelled') {
+                        $sqlStatus = 'Cancelled';
+                    } elseif (OrderCompletion::isCompleted($ord)) {
+                        $sqlStatus = 'Delivered';
+                    } elseif ($sqlStatus === 'Delivered') {
+                        // Old dispatched/in-transit records are not completed transactions.
+                        $sqlStatus = 'Ready';
+                    }
+                    $completedAt = $sqlStatus === 'Delivered' ? OrderCompletion::reportDate($ord) : null;
 
-                        if ($existsOrd !== null) {
-                            $this->query(
-                                'UPDATE Customer_Order SET Status = :status WHERE OrderID = :id',
-                                [':status' => $sqlStatus, ':id' => $orderId]
-                            );
-                            continue;
-                        }
-
+                    if ($existsOrd !== null) {
                         $this->query(
-                            "INSERT INTO Customer_Order (OrderID, CustomerID, OrderDate, Status)
-                             VALUES (:id, 'LR-CUS-301', :odate, :status)",
+                            'UPDATE Customer_Order SET Status = :status, CompletedAt = :completedAt WHERE OrderID = :id',
+                            [':status' => $sqlStatus, ':completedAt' => $completedAt, ':id' => $orderId]
+                        );
+                        continue;
+                    }
+
+                    $this->query(
+                        "INSERT INTO Customer_Order (OrderID, CustomerID, OrderDate, Status, CompletedAt)
+                         VALUES (:id, 'LR-CUS-301', :odate, :status, :completedAt)",
+                        [
+                            ':id'     => $orderId,
+                            ':odate'  => $orderDate,
+                            ':status' => $sqlStatus,
+                            ':completedAt' => $completedAt,
+                        ]
+                    );
+
+                    $itemType = (($ord['itemType'] ?? 'Standard') === 'Custom') ? 'Custom' : 'Standard';
+                    $qty = max(1, (int) ($ord['quantity'] ?? 1));
+                    $unitPrice = max(0.0, (float) ($ord['unitPrice'] ?? $ord['totalAmount'] ?? 1000));
+                    $suffixDigits = preg_replace('/\D+/', '', substr($orderId, -4)) ?: '5841';
+                    $orderItemId = strtoupper(trim((string) ($ord['orderItemId'] ?? ('ITM-2026-' . $suffixDigits))));
+
+                    $this->query(
+                        "INSERT INTO Order_Item (OrderItemID, OrderID, ProductID, VoucherID, ItemType, Quantity, UnitPrice)
+                         VALUES (:oiid, :oid, 'LR-LV-014', NULL, :itype, :qty, :uprice)",
+                        [
+                            ':oiid'   => $orderItemId,
+                            ':oid'    => $orderId,
+                            ':itype'  => $itemType,
+                            ':qty'    => $qty,
+                            ':uprice' => $unitPrice,
+                        ]
+                    );
+
+                    if ($orderItemId !== '') {
+                        $this->query(
+                            "INSERT IGNORE INTO Order_Item_Material (OrderItemID, MaterialID, QuantityUsed)
+                             VALUES (:oiid, 'MAT-WAL-01', :qused)",
                             [
-                                ':id'     => $orderId,
-                                ':odate'  => $orderDate,
-                                ':status' => $sqlStatus,
+                                ':oiid'  => $orderItemId,
+                                ':qused' => max(1.0, (float) ($ord['materialQtyUsed'] ?? 12)),
                             ]
                         );
 
-                        $itemType = (($ord['itemType'] ?? 'Standard') === 'Custom') ? 'Custom' : 'Standard';
-                        $qty = max(1, (int) ($ord['quantity'] ?? 1));
-                        $unitPrice = max(0.0, (float) ($ord['unitPrice'] ?? $ord['totalAmount'] ?? 1000));
-                        $suffixDigits = preg_replace('/\D+/', '', substr($orderId, -4)) ?: '5841';
-                        $orderItemId = strtoupper(trim((string) ($ord['orderItemId'] ?? ('ITM-2026-' . $suffixDigits))));
-
-                        $this->query(
-                            "INSERT INTO Order_Item (OrderItemID, OrderID, ProductID, VoucherID, ItemType, Quantity, UnitPrice)
-                             VALUES (:oiid, :oid, 'LR-LV-014', NULL, :itype, :qty, :uprice)",
-                            [
-                                ':oiid'   => $orderItemId,
-                                ':oid'    => $orderId,
-                                ':itype'  => $itemType,
-                                ':qty'    => $qty,
-                                ':uprice' => $unitPrice,
-                            ]
-                        );
-
-                        if ($orderItemId !== '') {
+                        if ($itemType === 'Custom') {
+                            $customizationId = strtoupper(trim((string) ($ord['customizationId'] ?? ('CSM-2026-' . $suffixDigits))));
                             $this->query(
-                                "INSERT IGNORE INTO Order_Item_Material (OrderItemID, MaterialID, QuantityUsed)
-                                 VALUES (:oiid, 'MAT-WAL-01', :qused)",
+                                "INSERT IGNORE INTO Customization (CustomizationID, OrderItemID, MaterialID, Length, Width, Height, ColorFinish, Notes, ExtraCost)
+                                 VALUES (:cid, :oiid, 'MAT-WAL-01', :len, :wid, :hei, :finish, :notes, :extra)",
                                 [
-                                    ':oiid'  => $orderItemId,
-                                    ':qused' => max(1.0, (float) ($ord['materialQtyUsed'] ?? 12)),
-                                ]
-                            );
-
-                            if ($itemType === 'Custom') {
-                                $customizationId = strtoupper(trim((string) ($ord['customizationId'] ?? ('CSM-2026-' . $suffixDigits))));
-                                $this->query(
-                                    "INSERT IGNORE INTO Customization (CustomizationID, OrderItemID, MaterialID, Length, Width, Height, ColorFinish, Notes, ExtraCost)
-                                     VALUES (:cid, :oiid, 'MAT-WAL-01', :len, :wid, :hei, :finish, :notes, :extra)",
-                                    [
-                                        ':cid'    => $customizationId,
-                                        ':oiid'   => $orderItemId,
-                                        ':len'    => max(30.0, (float) ($ord['lengthCm'] ?? 240)),
-                                        ':wid'    => max(30.0, (float) ($ord['widthCm'] ?? 105)),
-                                        ':hei'    => max(25.0, (float) ($ord['heightCm'] ?? 75)),
-                                        ':finish' => (string) ($ord['selectedFinish'] ?? 'Natural Finish'),
-                                        ':notes'  => (string) ($ord['notes'] ?? ''),
-                                        ':extra'  => max(0.0, (float) ($ord['extraCost'] ?? 0)),
-                                    ]
-                                );
-                            }
-
-                            $taskStatus = in_array(($ord['taskStatus'] ?? 'Todo'), ['Todo', 'InProgress', 'Done', 'Blocked'], true)
-                                ? (string) $ord['taskStatus']
-                                : 'Todo';
-                            $taskId = strtoupper(trim((string) ($ord['taskId'] ?? ('TSK-2026-' . $suffixDigits))));
-                            $this->query(
-                                'INSERT INTO Production_Task (TaskID, OrderItemID, StartDate, TaskStatus)
-                                 VALUES (:tid, :oiid, :sdate, :tstatus)',
-                                [
-                                    ':tid'     => $taskId,
-                                    ':oiid'    => $orderItemId,
-                                    ':sdate'   => $orderDate,
-                                    ':tstatus' => $taskStatus,
+                                    ':cid'    => $customizationId,
+                                    ':oiid'   => $orderItemId,
+                                    ':len'    => max(30.0, (float) ($ord['lengthCm'] ?? 240)),
+                                    ':wid'    => max(30.0, (float) ($ord['widthCm'] ?? 105)),
+                                    ':hei'    => max(25.0, (float) ($ord['heightCm'] ?? 75)),
+                                    ':finish' => (string) ($ord['selectedFinish'] ?? 'Natural Finish'),
+                                    ':notes'  => (string) ($ord['notes'] ?? ''),
+                                    ':extra'  => max(0.0, (float) ($ord['extraCost'] ?? 0)),
                                 ]
                             );
                         }
 
-                        $paidAmount = max(1.0, (float) ($ord['depositPaid'] ?? $ord['totalAmount'] ?? 500));
-                        $paymentId = strtoupper(trim((string) ($ord['paymentId'] ?? ('PAY-2026-' . $suffixDigits))));
+                        $taskStatus = in_array(($ord['taskStatus'] ?? 'Todo'), ['Todo', 'InProgress', 'Done', 'Blocked'], true)
+                            ? (string) $ord['taskStatus']
+                            : 'Todo';
+                        $taskId = strtoupper(trim((string) ($ord['taskId'] ?? ('TSK-2026-' . $suffixDigits))));
                         $this->query(
-                            'INSERT INTO Payment (PaymentID, OrderID, PaymentDate, Amount)
-                             VALUES (:pid, :oid, :pdate, :amt)',
+                            'INSERT INTO Production_Task (TaskID, OrderItemID, StartDate, TaskStatus)
+                             VALUES (:tid, :oiid, :sdate, :tstatus)',
                             [
-                                ':pid'   => $paymentId,
-                                ':oid'   => $orderId,
-                                ':pdate' => $orderDate,
-                                ':amt'   => $paidAmount,
+                                ':tid'     => $taskId,
+                                ':oiid'    => $orderItemId,
+                                ':sdate'   => $orderDate,
+                                ':tstatus' => $taskStatus,
                             ]
                         );
                     }
+
+                    $paidAmount = max(1.0, (float) ($ord['depositPaid'] ?? $ord['totalAmount'] ?? 500));
+                    $paymentId = strtoupper(trim((string) ($ord['paymentId'] ?? ('PAY-2026-' . $suffixDigits))));
+                    $this->query(
+                        'INSERT INTO Payment (PaymentID, OrderID, PaymentDate, Amount)
+                         VALUES (:pid, :oid, :pdate, :amt)',
+                        [
+                            ':pid'   => $paymentId,
+                            ':oid'   => $orderId,
+                            ':pdate' => $orderDate,
+                            ':amt'   => $paidAmount,
+                        ]
+                    );
                 }
             }
         } catch (\Throwable) {
